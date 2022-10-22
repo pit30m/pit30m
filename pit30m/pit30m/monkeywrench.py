@@ -1,7 +1,7 @@
 
-import geojson
 import os
 import csv
+import geojson
 from pickle import UnpicklingError
 import numpy as np
 import lz4
@@ -10,7 +10,10 @@ import fsspec
 from tqdm import tqdm
 from typing import Optional, List
 from urllib.parse import urlparse, urljoin
-from pit30m.camera import CAM_NAMES
+from pit30m.camera import CamName
+from pit30m.data.log_reader import LogReader
+from joblib import Parallel, delayed
+
 
 class MonkeyWrench:
 
@@ -50,19 +53,56 @@ class MonkeyWrench:
 
         Building large indexes from scratch can take a while, even on the order of hours on some machines.
         """
-        for cam in CAM_NAMES:
+        for cam in CamName:
             self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath)
 
     def index_lidar(self, log_id: str, lidar_name: str = "hdl64e_12_middle_front_roof", out_index_fpath: Optional[str] = None):
         """Same as 'index_all_cameras', except for the LiDAR sweeps."""
-        pass
+        in_fs = fsspec.filesystem(urlparse(self._root).scheme)
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        log_reader = LogReader(log_root_uri=log_root)
+        lidar_dir = os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
 
-    def index_camera(self, log_id: str, cam_name: str, out_index_fpath: Optional[str] = None):
+        def _get_lidar_time(lidar_uri):
+            try:
+                with in_fs.open(lidar_uri, "rb") as compressed_f:
+                    with lz4.frame.open(compressed_f, "rb") as f:
+                        lidar_data = np.load(f)
+                        point_times = lidar_data["seconds"]
+                        return point_times.min(), point_times.max(), point_times.mean(), np.median(point_times), lidar_data["points"].shape
+                        # sweep_delta_s = point_times.max() - point_times.min()
+            except EOFError:
+                # Some files may be corrupted? I'll need to triple check this with the diagnostic tools.
+                print("EOFError", lidar_uri)
+                return None
+
+        sample_uris = in_fs.glob(os.path.join(lidar_dir, "*", "*.npz.lz4"))
+        sample_uris = sample_uris[10:100]
+        pool = Parallel(n_jobs=8, verbose=10)
+        time_stats = pool(delayed(_get_lidar_time)(lidar_uri) for lidar_uri in sample_uris)
+
+        for sample_uri, time_stat_entry in zip(sample_uris, time_stats):
+            if time_stat_entry is None:
+                print(f"WARNING: Failed to read {sample_uri}")
+                continue
+            (min_s, max_s, mean_s, med_s, shape) = time_stat_entry
+            sweep_delta_s = max_s - min_s
+            if abs(sweep_delta_s - 0.1) > 0.01:
+                print(f"{sample_uri}: sweep_delta_s = {sweep_delta_s:.4f}s")
+
+        print("OK")
+
+
+        # NOTE(andrei): For some rare sweeps (most first sweeps in a log) this will
+        # NOTE(andrei): The LiDAR is motion-compensated. TBD which timestamp is the canonical one.
+
+    def index_camera(self, log_id: str, cam_name: CamName, out_index_fpath: Optional[str] = None):
         """Please see `index_all_cameras` for info."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
 
         log_root = os.path.join(self._root, log_id.lstrip("/"))
-        cam_dir = os.path.join(log_root, "cameras", cam_name.lstrip("/"))
+        log_reader = LogReader(log_root_uri=log_root)
+        cam_dir = os.path.join(log_root, "cameras", cam_name.value.lstrip("/"))
 
         # if out_index_fpath is None:
         #     out_index_fpath = os.path.join(log_root, "index", f"{cam_name}.geojson")
@@ -76,31 +116,16 @@ class MonkeyWrench:
         # if not os.path.exists(os.path.join(log_root, "all_poses.npz.lz4")):
         #     continue
 
-        poses_fpath = os.path.join(log_root, "all_poses.npz.lz4")
-        with in_fs.open(poses_fpath, "rb") as in_compressed_f:
-            with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
-                poses = np.load(wgs84_f)["data"]
+        poses = log_reader.raw_poses
 
         # TODO(andrei): Check if these WGS84 values are raw or adjusted based on localization since it makes a big
         # impact on any localization or reconstruction work. For indexing we should be fine either way.
-        wgs84_fpath = os.path.join(log_root, "wgs84.npz.lz4")
-        with in_fs.open(wgs84_fpath, "rb") as in_compressed_f:
-            with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
-                wgs84s = np.load(wgs84_f)["data"]
-
+        #
         # NOTE(andrei): WGS84 data is coarser, 10Hz, not 100Hz.
-        wgs84_data = []
-        for wgs84 in wgs84s:
-            wgs84_data.append((wgs84["timestamp"],
-                            wgs84["longitude"],
-                            wgs84["latitude"],
-                            wgs84["altitude"],
-                            wgs84["heading"],
-                            wgs84["pitch"],
-                            wgs84["roll"]))
-        wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
+        wgs84_data = log_reader.wgs84_poses_dense
         wgs84_times = np.array(wgs84_data[:, 0])
 
+        # TODO(andrei): Index by MRP!
         pose_data = []
         for pose in poses:
             pose_data.append((pose["capture_time"],

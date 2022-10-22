@@ -1,6 +1,6 @@
 from enum import Enum
 
-class CamNames(Enum):
+class CamName(Enum):
     """Names of cameras available in the dataset.
 
     Port is left, starboard is right. (Mnemonic: alphabetical from left to right ('p' < 's').)
