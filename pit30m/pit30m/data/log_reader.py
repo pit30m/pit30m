@@ -21,6 +21,20 @@ class CameraImage:
     gain_db: float
 
 
+@dataclass
+class LiDARFrame:
+    xyz_continuous: np.ndarray
+    xyz_sensor: np.ndarray
+    intensity: np.ndarray
+    point_times: np.ndarray
+    laser_theta: np.ndarray = None
+    raw_power: np.ndarray = None
+    laser_id: np.ndarray = None
+    # ['laser_theta', 'seconds', 'raw_power', 'intensity', 'points', 'points_H_sensor', 'laser_id']
+
+
+VELODYNE_NAME = "hdl64e_12_middle_front_roof"
+
 class Map:
 
     @staticmethod
@@ -59,19 +73,37 @@ class LogReader:
         Specifically, using abstractions like pytorch DataLoaders can dramatically improve throughput, e.g., going from
         20-30 images per second to 100+.
         """
-        self._log_root_uri = log_root_uri
+        self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
         self._wgs84_pose_fname = wgs84_pose_fname
+
+    @property
+    def log_id(self):
+        return os.path.basename(self._log_root_uri)
 
     @property
     def cam_root(self):
         return os.path.join(self._log_root_uri, "cameras")
 
+    @property
+    def lidar_root(self):
+        # Simpler than cameras since there's always a single lidar.
+        return os.path.join(self._log_root_uri, "lidars", VELODYNE_NAME)
 
     def get_cam_root(self, cam_name: CamName):
         assert isinstance(cam_name, CamName)
         return os.path.join(self._log_root_uri, "cameras", cam_name.value)
 
+
+    @lru_cache(maxsize=16)
+    def get_lidar_geo_index(self):
+        index_fpath = os.path.join(self.lidar_root, "index", "wgs84.csv")
+        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
+        if not fs.exists(index_fpath):
+            raise ValueError(f"Index file not found: {index_fpath}!")
+
+        with fs.open(index_fpath, "r") as f:
+            return pd.read_csv(f)
 
     @lru_cache(maxsize=16)
     def get_cam_geo_index(self, cam_name: str):
@@ -86,9 +118,22 @@ class LogReader:
     def calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "mono_camera_calibration.npy")
         with fsspec.open(calib_fpath, "rb") as f:
-            data = np.load(f)
-            import ipdb; ipdb.set_trace()
-            print()
+            # UnicodeError if encoding not specified because Andrei was lazy when originally dumping the dataset
+            # and didn't export calibration in a human-friendly format.
+            data = np.load(f, allow_pickle=True, encoding="latin1")
+            # Ugly code since I numpy-saved a dict...
+            data = data.tolist()["data"]
+            # They all contain the values of CamNames as values
+            #
+            # I need to play with these different values and double check what the raw images are present as, but in
+            # principle ...Z = calibration so that image Y is Z world, etc.
+            #
+            # Main question: Are the raw images dumped already rectified one way or another?
+            data["ALIGNED_WITH_VEHICLE_Z"]
+            data["MONOCULAR_RECTIFIED"]
+            data["MONOCULAR_UNRECTIFIED"]
+            # import ipdb; ipdb.set_trace()
+            # print()
             return data
 
 
@@ -122,6 +167,7 @@ class LogReader:
         Rows are: (timestamp_seconds, lon, lat, alt, roll, pitch, yaw).
         """
         raw = self.wgs84_poses
+        wgs84_data = []
         for wgs84 in raw:
             wgs84_data.append((wgs84["timestamp"],
                             wgs84["longitude"],
@@ -133,13 +179,40 @@ class LogReader:
         wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
         return wgs84_data
 
+    def get_image(self, cam_name: CamName, timestamp: float):
+        """Returns the image for the given camera and timestamp."""
+        # NOTE(andrei): For dataloader.
+        pass
+
+    def get_lidar(self, timestamp: float):
+        """Returns the LiDAR scan for the given timestamp."""
+        # NOTE(andrei): For dataloader.
+        pass
+
+    def lidar_iterator(self):
+        index = self.get_lidar_geo_index()
+        for row in index.itertuples():
+            lidar_fpath = os.path.join(self.lidar_root, row.lidar_fpath)
+            with fsspec.open(lidar_fpath, "rb") as compressed_f:
+                with lz4.frame.open(compressed_f, "rb") as f:
+                    npf = np.load(f)
+                    # print(npf.files)
+                    yield LiDARFrame(
+                        # TODO add remaining fields like raw power, etc.
+                        xyz_continuous=npf["points"],
+                        xyz_sensor=npf["points_H_sensor"],
+                        intensity=npf["intensity"],
+                        point_times=npf["seconds"],
+                    )
+
 
     def camera_iterator(self, cam_name: CamName):
-        # Iterator over camera images with metadata
+        """Iterator over camera images with metadata"""
         # TODO(andrei): requires an index to have been built.
         index = self.get_cam_geo_index(cam_name)
+        cam_root = self.get_cam_root(cam_name)
         for row in index.itertuples():
-            img_fpath = os.path.join(self.get_cam_root(cam_name), row.img_fpath_in_cam)
+            img_fpath = os.path.join(cam_root, row.img_fpath_in_cam)
             with fsspec.open(img_fpath, "rb") as f:
                 img = Image.open(f)
 

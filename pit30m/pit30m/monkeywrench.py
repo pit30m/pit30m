@@ -12,6 +12,7 @@ from typing import Optional, List
 from urllib.parse import urlparse, urljoin
 from pit30m.camera import CamName
 from pit30m.data.log_reader import LogReader
+from pit30m.indexing import associate
 from joblib import Parallel, delayed
 
 
@@ -56,12 +57,24 @@ class MonkeyWrench:
         for cam in CamName:
             self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath)
 
-    def index_lidar(self, log_id: str, lidar_name: str = "hdl64e_12_middle_front_roof", out_index_fpath: Optional[str] = None):
+    def index_lidar(
+        self,
+        log_id: str,
+        lidar_name: str = "hdl64e_12_middle_front_roof",
+        sweep_time_convention: str = "end",
+        out_index_fpath: Optional[str] = None
+    ):
         """Same as 'index_all_cameras', except for the LiDAR sweeps."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
+        out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
         log_reader = LogReader(log_root_uri=log_root)
         lidar_dir = os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
+        if out_index_fpath is None:
+            out_index_fpath = os.path.join(lidar_dir, "index")
+
+        wgs84_index_fpath = os.path.join(out_index_fpath, "wgs84.csv")
+        dumped_ts_fpath = os.path.join(lidar_dir, "timestamps.npz.lz4")
 
         def _get_lidar_time(lidar_uri):
             try:
@@ -76,11 +89,24 @@ class MonkeyWrench:
                 print("EOFError", lidar_uri)
                 return None
 
-        sample_uris = in_fs.glob(os.path.join(lidar_dir, "*", "*.npz.lz4"))
-        sample_uris = sample_uris[10:100]
-        pool = Parallel(n_jobs=8, verbose=10)
-        time_stats = pool(delayed(_get_lidar_time)(lidar_uri) for lidar_uri in sample_uris)
+        # TODO(andrei): This seems difficult to leverage as the number of timestamps seems to differ from the number of
+        # dumped sweeps, so aligning the two would be challenging. Perhaps I could just use this data to check some of
+        # my assumptions later.
+        #
+        # with in_fs.open(dumped_ts_fpath, "rb") as compressed_f:
+        #     with lz4.frame.open(compressed_f, "rb") as f:
+        #         timestamps = np.load(f)["data"]
+        #         import ipdb; ipdb.set_trace()
+        #         print()
 
+        sample_uris = in_fs.glob(os.path.join(lidar_dir, "*", "*.npz.lz4"))
+        # sample_uris = sample_uris[:1000]
+        pool = Parallel(n_jobs=-1, verbose=10)
+        time_stats = pool(delayed(_get_lidar_time)(lidar_uri) for lidar_uri in sample_uris)
+        wgs84 = log_reader.wgs84_poses_dense
+
+        sweep_times_raw = []
+        valid_sample_uris = []
         for sample_uri, time_stat_entry in zip(sample_uris, time_stats):
             if time_stat_entry is None:
                 print(f"WARNING: Failed to read {sample_uri}")
@@ -88,13 +114,72 @@ class MonkeyWrench:
             (min_s, max_s, mean_s, med_s, shape) = time_stat_entry
             sweep_delta_s = max_s - min_s
             if abs(sweep_delta_s - 0.1) > 0.01:
-                print(f"{sample_uri}: sweep_delta_s = {sweep_delta_s:.4f}s")
+                print(f"{sample_uri}: sweep_delta_s = {sweep_delta_s:.4f}s | pcd.{shape = }")
 
-        print("OK")
+            valid_sample_uris.append(sample_uri)
+            if sweep_time_convention == "end":
+                sweep_times_raw.append(max_s)
+            elif sweep_time_convention == "start":
+                sweep_times_raw.append(min_s)
+            elif sweep_time_convention == "mean":
+                sweep_times_raw.append(mean_s)
+            elif sweep_time_convention == "median":
+                sweep_times_raw.append(med_s)
+            else:
+                raise ValueError("Unknown sweep time convention: " + sweep_time_convention)
+
+        sweep_times = np.array(sweep_times_raw)
+        del sample_uri
+
+        # TODO(andrei): Index by MRP!
+        # poses = log_reader.raw_poses
+        # pose_data = []
+        # for pose in poses:
+        #     pose_data.append((pose["capture_time"],
+        #                     pose["poses_and_differentials_valid"],
+        #                     pose["continuous"]["x"],
+        #                     pose["continuous"]["y"],
+        #                     pose["continuous"]["z"]))
+        # pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
+        # pose_times = np.array(pose_index[:, 0])
+
+        wgs84_times = wgs84[:, 0]
+        wgs84_corr_idx = associate(sweep_times, wgs84_times)
+        wgs84_delta = abs(wgs84[wgs84_corr_idx, 0] - sweep_times)
+        # Recall WGS84 messages are at 10Hz so we have to be a bit more lax than when checking pose assoc
+        bad_offs = wgs84_delta > 0.10
+        print(bad_offs.sum(), "bad offsets")
+        if bad_offs.sum() > 0:
+            print(np.where(bad_offs))
+            print()
+
+        lidars_with_wgs84 = []
+        assert len(sweep_times) == len(bad_offs) == len(wgs84_corr_idx)
+        assert len(valid_sample_uris) == len(sweep_times)
+        for sweep_uri, sweep_time, bad_off, wgs84_idx in zip(valid_sample_uris, sweep_times, bad_offs, wgs84_corr_idx):
+            if bad_off:
+                # TODO Should we flag these in the index?
+                continue
+
+            lidar_fpath = "/".join(sweep_uri.split("/")[-2:])
+
+            # img row would include capture seconds, path, then other elements
+            # imgs_with_wgs84.append((wgs84_data[wgs84_idx], img_row))
+            lidars_with_wgs84.append((wgs84[wgs84_idx, :], (sweep_time, lidar_fpath)))
 
 
-        # NOTE(andrei): For some rare sweeps (most first sweeps in a log) this will
+        # NOTE(andrei): For some rare sweeps (most first sweeps in a log) this will have gaps.
         # NOTE(andrei): The LiDAR is motion-compensated. TBD which timestamp is the canonical one.
+        if not out_fs.exists(out_index_fpath):
+            out_fs.mkdir(out_index_fpath)
+        with out_fs.open(wgs84_index_fpath, "w", newline="") as csvfile:
+            spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            spamwriter.writerow([
+                "timestamp", "longitude", "latitude", "altitude", "heading", "pitch", "roll",
+                f"sweep_seconds_{sweep_time_convention}", "lidar_fpath"])
+            for wgs84_row, lidar_row in lidars_with_wgs84:
+                spamwriter.writerow(list(wgs84_row) + list(lidar_row))
+
 
     def index_camera(self, log_id: str, cam_name: CamName, out_index_fpath: Optional[str] = None):
         """Please see `index_all_cameras` for info."""
@@ -167,15 +252,6 @@ class MonkeyWrench:
         imgs_with_wgs84 = []
         for img_row in tqdm(image_index):
             img_time = float(img_row[0])
-            # TODO(andrei): Within a few ms at worst, poses are evenly spaced. We can use
-            # arithmetic to dramatically constrain our search range to turn log n binary search
-            # into a constant time look-up.
-            #
-            # TODO(andrei): Interpolate poses linearly. Poses are 100Hz so nearest-neighbor lookups can
-            # be at most 10-ish ms off which can cause 0.33m of error for 33 mps driving (120kph) in
-            # a worst-case scenario, so not trivial.
-            #
-            # Fortunately, for such small intervals, linear interpolation should be OK.
             pose_idx = np.searchsorted(pose_times, img_time, side="left")
             pose_idx = pose_idx + 1
             if pose_idx >= len(pose_index):
@@ -198,7 +274,6 @@ class MonkeyWrench:
                 imgs_with_wgs84.append((wgs84_data[wgs84_idx], img_row))
 
 
-        # TODO(andrei): Write timestamp index and WGS84 index.
         # TODO(andrei): Don't write CP, because then you get nonsense when aggregating across logs.
         # with open(out_index_fpath, "w", newline="") as csvfile:
         #     spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
