@@ -65,7 +65,7 @@ class LogReader:
         pose_fname: str = "all_poses.npz.lz4",
         wgs84_pose_fname: str = "wgs84.npz.lz4",
     ):
-        """Low-level S3-aware utility for interacting with a specific log.
+        """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
         Devkit users should consider using existing higher-level APIs, such as `pit30m.torch.dataset.Pit30MDataset`
         unless they have a specific use case that requires low-level access to the data.
@@ -205,6 +205,8 @@ class LogReader:
                         point_times=npf["seconds"],
                     )
 
+    # def raw_camera_iterator(self, cam_name: CamName):
+    #     pass
 
     def camera_iterator(self, cam_name: CamName):
         """Iterator over camera images with metadata"""
