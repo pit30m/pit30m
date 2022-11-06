@@ -23,7 +23,10 @@ from joblib import Parallel, delayed
 
 class MonkeyWrench:
 
-    def __init__(self, dataset_root: str = "s3://the/bucket") -> None:
+    def __init__(self,
+        dataset_root: str = "s3://the/bucket",
+        metadata_root: str = "file:///mnt/data/pit30m/",
+    ) -> None:
         """Dataset administration tool for the Pit30M dataset (geo-indexing, data integrity checks, etc.)
 
         For regular end users, `pit30m.cli` is almost always what you should use.
@@ -32,6 +35,7 @@ class MonkeyWrench:
         custom indexes and subsets of the dataset.
         """
         self._root = dataset_root
+        self._metadata_root = metadata_root
 
 
     def index(self, log_id: str, out_index_fpath: Optional[str] = None):
@@ -78,7 +82,8 @@ class MonkeyWrench:
         if out_index_fpath is None:
             out_index_fpath = os.path.join(lidar_dir, "index")
 
-        wgs84_index_fpath = os.path.join(out_index_fpath, "wgs84.csv")
+        wgs84_index_fpath = os.path.join(out_index_fpath, "raw_wgs84.csv")
+        utm_index_fpath = os.path.join(out_index_fpath, "utm.csv")
         unindexed_fpath = os.path.join(out_index_fpath, "unindexed.csv")
         dumped_ts_fpath = os.path.join(lidar_dir, "timestamps.npz.lz4")
 
@@ -109,7 +114,7 @@ class MonkeyWrench:
         # sample_uris = sample_uris[:1000]
         pool = Parallel(n_jobs=-1, verbose=10)
         time_stats = pool(delayed(_get_lidar_time)(lidar_uri) for lidar_uri in sample_uris)
-        wgs84 = log_reader.wgs84_poses_dense
+        raw_wgs84 = log_reader.raw_wgs84_poses_dense
 
         sweep_times_raw = []
         valid_sample_uris = []
@@ -149,9 +154,9 @@ class MonkeyWrench:
         # pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
         # pose_times = np.array(pose_index[:, 0])
 
-        wgs84_times = wgs84[:, 0]
+        wgs84_times = raw_wgs84[:, 0]
         wgs84_corr_idx = associate(sweep_times, wgs84_times)
-        wgs84_delta = abs(wgs84[wgs84_corr_idx, 0] - sweep_times)
+        wgs84_delta = abs(raw_wgs84[wgs84_corr_idx, 0] - sweep_times)
         # Recall WGS84 messages are at 10Hz so we have to be a bit more lax than when checking pose assoc
         bad_offs = wgs84_delta > 0.10
         print(bad_offs.sum(), "bad offsets")
@@ -171,7 +176,7 @@ class MonkeyWrench:
 
             # img row would include capture seconds, path, then other elements
             # imgs_with_wgs84.append((wgs84_data[wgs84_idx], img_row))
-            lidars_with_wgs84.append((wgs84[wgs84_idx, :], (sweep_time, lidar_fpath)))
+            lidars_with_wgs84.append((raw_wgs84[wgs84_idx, :], (sweep_time, lidar_fpath)))
 
 
         # NOTE(andrei): For some rare sweeps (most first sweeps in a log) this will have gaps.
@@ -203,32 +208,31 @@ class MonkeyWrench:
             out_index_fpath = os.path.join(cam_dir, "index")
 
         regular_index_fpath = os.path.join(out_index_fpath, "index.csv")
-        wgs84_index_fpath = os.path.join(out_index_fpath, "wgs84.csv")
+        raw_wgs84_index_fpath = os.path.join(out_index_fpath, "raw_wgs84.csv")
+        utm_index_fpath = os.path.join(out_index_fpath, "utm.csv")
         out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
+        unindexed_fpath = os.path.join(out_index_fpath, "unindexed.csv")
 
         # if not os.path.exists(os.path.join(log_root, "all_poses.npz.lz4")):
         #     continue
-
-        poses = log_reader.raw_poses
 
         # TODO(andrei): Check if these WGS84 values are raw or adjusted based on localization since it makes a big
         # impact on any localization or reconstruction work. For indexing we should be fine either way.
         #
         # NOTE(andrei): WGS84 data is coarser, 10Hz, not 100Hz.
-        wgs84_data = log_reader.wgs84_poses_dense
-        wgs84_times = np.array(wgs84_data[:, 0])
+        raw_wgs84_data = log_reader.raw_wgs84_poses_dense
+        raw_wgs84_times = np.array(raw_wgs84_data[:, 0])
 
-        # TODO(andrei): Index by MRP!
-        pose_data = []
-        for pose in poses:
-            pose_data.append((pose["capture_time"],
-                            pose["poses_and_differentials_valid"],
-                            pose["continuous"]["x"],
-                            pose["continuous"]["y"],
-                            pose["continuous"]["z"]))
-        pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
-        pose_times = np.array(pose_index[:, 0])
         # print(pose_times.shape)
+
+        cp_dense = log_reader.continuous_pose_dense
+        cp_times = cp_dense[:, 0]
+
+        utm_poses = log_reader.utm_poses_dense
+        mrp_poses = log_reader.map_relative_pose_dense
+        # Check a dataset invariant as a smoke tests
+        assert len(mrp_poses) == len(utm_poses)
+        utm_times = utm_poses[:, 0]
 
         index = []
         for entry in tqdm(in_fs.glob(os.path.join(cam_dir, "*", "*.webp"))):
@@ -280,28 +284,28 @@ class MonkeyWrench:
         unindexed_frames = []
         for img_row in tqdm(image_index):
             img_time = float(img_row[0])
-            pose_idx = np.searchsorted(pose_times, img_time, side="left")
-            pose_idx = pose_idx + 1
-            if pose_idx >= len(pose_index):
-                pose_idx = len(pose_index) - 1
-            delta_s = abs(img_time - pose_times[pose_idx])
+            mrp_idx = np.searchsorted(utm_times, img_time, side="left")
+            mrp_idx = mrp_idx + 1
+            if mrp_idx >= len(utm_poses):
+                mrp_idx = len(utm_poses) - 1
+            delta_s = abs(img_time - mrp_poses["time"][mrp_idx])
             if delta_s > 0.1:
                 # NOTE(andrei): This is just an indexing limitation, not a true error IMO.
                 print(f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]")
                 unindexed_frames.append(img_row[1])
             else:
-                imgs_with_pose.append((pose_index[pose_idx], img_row))
+                imgs_with_pose.append((utm_poses[mrp_idx], mrp_poses[mrp_idx], img_row))
 
-            wgs84_idx = np.searchsorted(wgs84_times, img_time, side="left")
+            wgs84_idx = np.searchsorted(raw_wgs84_times, img_time, side="left")
             wgs84_idx += 1
-            if wgs84_idx >= len(wgs84_data):
-                wgs84_idx = len(wgs84_data) - 1
+            if wgs84_idx >= len(raw_wgs84_data):
+                wgs84_idx = len(raw_wgs84_data) - 1
 
-            delta_wgs_s = abs(img_time - wgs84_times[wgs84_idx])
+            delta_wgs_s = abs(img_time - raw_wgs84_times[wgs84_idx])
             if delta_wgs_s > 0.5:
                 print(f"WARNING: {img_time = } does not have a valid WGS84 coordinate in this log [{delta_s = }]")
             else:
-                imgs_with_wgs84.append((wgs84_data[wgs84_idx], img_row))
+                imgs_with_wgs84.append((raw_wgs84_data[wgs84_idx], img_row))
 
 
         # TODO(andrei): Don't write CP, because then you get nonsense when aggregating across logs.
@@ -313,7 +317,7 @@ class MonkeyWrench:
 
         if not out_fs.exists(out_index_fpath):
             out_fs.mkdir(out_index_fpath)
-        with out_fs.open(wgs84_index_fpath, "w", newline="") as csvfile:
+        with out_fs.open(raw_wgs84_index_fpath, "w", newline="") as csvfile:
             spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
             spamwriter.writerow(["timestamp", "longitude", "latitude", "altitude", "heading", "pitch", "roll", "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
             for wgs84_row, img_row in imgs_with_wgs84:
@@ -326,6 +330,19 @@ class MonkeyWrench:
             spamwriter.writerow(["img_fpath_in_cam"])
             for entry in unindexed_frames:
                 spamwriter.writerow([entry])
+
+        with out_fs.open(utm_index_fpath, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(["timestamp", "utm_e", "utm_n", "mrp_x", "mrp_y", "mrp_z", "mrp_roll", "mrp_pitch",
+                "mrp_yaw", "mrp_submap_id", "capture_seconds", "img_fpath_in_cam",
+                "shutter_seconds", "sequence_counter", "gain_db"])
+            for utm_pose, mrp_pose, img_row in imgs_with_pose:
+                utm_e, utm_n = utm_pose
+                # timestamp, valid, submap, x,y,z,roll,pitch,yaw = mrp_pose
+                # TODO(andrei): Add altitude here.
+                writer.writerow([mrp_pose["time"], utm_e, utm_n, -1] +
+                [mrp_pose["x"], mrp_pose["y"], mrp_pose["z"],
+                mrp_pose["roll"], mrp_pose["pitch"], mrp_pose["yaw"], mrp_pose["submap_id"]] + list(img_row))
 
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"

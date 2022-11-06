@@ -1,5 +1,6 @@
 import pickle as pkl
 import uuid
+import ipdb
 from uuid import UUID
 from typing import Mapping, Tuple, Union, Optional
 
@@ -10,8 +11,6 @@ import fsspec
 from pyproj import CRS, Transformer
 from joblib import Memory
 
-from pit30m.data.log_reader import LogReader
-from pit30m.camera import CamName
 
 # See: https://epsg.io/32617
 UTM_ZONE_IN_PITTSBURGH_CODE = 32617
@@ -77,6 +76,8 @@ class Map:
         Assumes all poses are within the same UTM zone, which holds for all of Pit30M.
         """
         assert len(map_poses_xyz) == len(submap_ids)
+        print(map_poses_xyz.shape)
+        print(map_poses_xyz.dtype)
 
         off_utm = []
         for map_uuid in submap_ids:

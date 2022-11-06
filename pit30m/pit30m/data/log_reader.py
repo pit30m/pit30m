@@ -1,15 +1,18 @@
 import csv
 import lz4
 from dataclasses import dataclass
+import ipdb
 import os
 from functools import cached_property, lru_cache
 from urllib.parse import urlparse
 import pandas as pd
 import numpy as np
+from uuid import UUID
 import fsspec
 from PIL import Image
 
 from pit30m.camera import CamName
+from pit30m.data.submap import Map
 
 @dataclass
 class CameraImage:
@@ -35,26 +38,6 @@ class LiDARFrame:
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
 
-class Map:
-
-    @staticmethod
-    def from_uri(uri: str) -> "Map":
-        pass
-
-    def __init__(self, map_data):
-        """Represents the Pit30M topometric map.
-
-        To get a "global" pose from a log pose, you need to take its map-relative pose, and then compose that with the
-        map's UTM coordinates.
-
-        This would break if the map spanned multiple UTM zones, in which case we'd be forced to use WGS84 spherical
-        coordinates or ECEF Euclidean coordinates for everything but it doesn't. Pittsburgh and its surrounding areas
-        fit comfortably within UTM Zone 17N, i.e., EPSG:32617.
-
-        TODO(andrei): Should we bundle this info in the devkit itself for fast retrieval? It should be pretty tiny.
-        At the very least we should cache it somewhere like in "~/.cache/pit30m".
-        """
-        pass
 
 
 class LogReader:
@@ -64,6 +47,7 @@ class LogReader:
         log_root_uri: str,
         pose_fname: str = "all_poses.npz.lz4",
         wgs84_pose_fname: str = "wgs84.npz.lz4",
+        map: Map = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -76,6 +60,12 @@ class LogReader:
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
         self._wgs84_pose_fname = wgs84_pose_fname
+        if map is None:
+            # By default try to build map with data relative to the log root
+            log_parent = os.path.dirname(self._log_root_uri)
+            map = Map.from_submap_utm_uri(os.path.join(log_parent, "submap_utm.pkl"))
+        self._map = map
+
 
     @property
     def log_id(self):
@@ -138,7 +128,7 @@ class LogReader:
 
 
     @cached_property
-    def raw_poses(self) -> np.ndarray:
+    def raw_pose_data(self) -> np.ndarray:
         """Returns the raw pose array, which needs manual association with other data types. 100Hz.
 
         In practice, users should use the camera/LiDAR iterators instead.
@@ -151,7 +141,69 @@ class LogReader:
                 return np.load(wgs84_f)["data"]
 
     @cached_property
-    def wgs84_poses(self) -> np.ndarray:
+    def continuous_pose_dense(self) -> np.ndarray:
+        pose_data = []
+        # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
+        for pose in self.raw_pose_data:
+            pose_data.append((pose["capture_time"],
+                            pose["poses_and_differentials_valid"],
+                            pose["continuous"]["x"],
+                            pose["continuous"]["y"],
+                            pose["continuous"]["z"],
+                            pose["continuous"]["roll"],
+                            pose["continuous"]["pitch"],
+                            pose["continuous"]["yaw"]))
+        pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
+        return pose_index
+
+    @cached_property
+    def map_relative_pose_dense(self) -> np.ndarray:
+        """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap."""
+        pose_data = []
+        # XXX(andrei): Document the timestamps carefully. Remember that GPS time can be confusing!
+        for pose in self.raw_pose_data:
+            # TODO(andrei): Custom, interpretable dtype!
+            pose_data.append((
+                pose["capture_time"],
+                pose["poses_and_differentials_valid"],
+                pose["map_relative"]["submap"],
+                pose["map_relative"]["x"],
+                pose["map_relative"]["y"],
+                pose["map_relative"]["z"],
+                pose["map_relative"]["roll"],
+                pose["map_relative"]["pitch"],
+                pose["map_relative"]["yaw"],
+            ))
+        pose_index = np.array(
+            sorted(pose_data, key=lambda x: x[0]),
+            dtype=np.dtype([
+                ("time", np.float64),
+                ("valid", np.bool),
+                ("submap_id", "|S32"),
+                ("x", np.float64),
+                ("y", np.float64),
+                ("z", np.float64),
+                ("roll", np.float64),
+                ("pitch", np.float64),
+                ("yaw", np.float64),
+            ]),
+        )
+        return pose_index
+
+    @cached_property
+    def utm_poses_dense(self) -> np.ndarray:
+        """UTM poses for the log, ordered by time.
+
+        TODO(andrei): Update to provide altitude.
+        """
+        mrp = self.map_relative_pose_dense
+        xyzs = np.stack((mrp["x"], mrp["y"], mrp["z"]), axis=1)
+        # Handle submap IDs which were truncated upon encoded due to ending with a zero.
+        submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
+        return self._map.to_utm(xyzs, submaps)
+
+    @cached_property
+    def raw_wgs84_poses(self) -> np.ndarray:
         """Raw WGS84 poses, not optimized offline. 10Hz."""
         wgs84_fpath = os.path.join(self._log_root_uri, self._wgs84_pose_fname)
         with fsspec.open(wgs84_fpath, "rb") as in_compressed_f:
@@ -159,14 +211,14 @@ class LogReader:
                 return np.load(wgs84_f)["data"]
 
     @cached_property
-    def wgs84_poses_dense(self) -> np.ndarray:
-        """Returns an N x 7 array of WGS84 poses, ordered by timestamp.
+    def raw_wgs84_poses_dense(self) -> np.ndarray:
+        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by timestamp.
 
         TODO(andrei): Degrees or radians?
 
         Rows are: (timestamp_seconds, lon, lat, alt, roll, pitch, yaw).
         """
-        raw = self.wgs84_poses
+        raw = self.raw_wgs84_poses
         wgs84_data = []
         for wgs84 in raw:
             wgs84_data.append((wgs84["timestamp"],
