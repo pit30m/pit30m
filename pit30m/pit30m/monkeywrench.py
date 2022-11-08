@@ -20,6 +20,8 @@ from pit30m.data.log_reader import LogReader
 from pit30m.indexing import associate
 from joblib import Parallel, delayed
 
+EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
+
 
 class MonkeyWrench:
 
@@ -38,7 +40,7 @@ class MonkeyWrench:
         self._metadata_root = metadata_root
 
 
-    def index(self, log_id: str, out_index_fpath: Optional[str] = None):
+    def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False):
         """Create index files for the raw data in the dataset.
 
         At dump time, the dataset just contained numbered image files with small associated metadata files. This meant
@@ -47,15 +49,24 @@ class MonkeyWrench:
 
         Building large indexes from scratch can take a while, even on the order of hours on some machines. We are
         dealing with roughly 400 million images, after all.
+
+        Args:
+            log_id:             The ID of the log to analyze and index.
+            out_index_fpath:    Where to write indexes. If None (default) they will be written to the same directory as
+                                the respective sensor.
+            check:              If True, run expensive integrity checks on the data, e.g., actually read each image,
+                                check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
+                                check its shape too, etc.
         """
-        self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath)
+        self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
 
     def merge_indexes(self, log_ids: List[str]):
         """Given a list of log IDs with indexed data, merge the indexes into a single index."""
         # TODO(andrei): Implement this.
         ...
 
-    def index_all_cameras(self, log_id: str, out_index_fpath: Optional[str] = None, check_images: bool = False):
+    def index_all_cameras(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False):
         """Create an index of the images in the given log.
 
         This is useful for quickly finding images in a given region, or for finding the closest image to a given GPS
@@ -64,16 +75,19 @@ class MonkeyWrench:
         Building large indexes from scratch can take a while, even on the order of hours on some machines.
         """
         for cam in CamName:
-            self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check_images=check_images)
+            self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
 
     def index_lidar(
         self,
         log_id: str,
         lidar_name: str = "hdl64e_12_middle_front_roof",
         sweep_time_convention: str = "end",
-        out_index_fpath: Optional[str] = None
+        out_index_fpath: Optional[str] = None,
+        check: bool = False
     ):
         """Same as 'index_all_cameras', except for the LiDAR sweeps."""
+        if check:
+            raise RuntimeError("XXX not implemented yet")
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
         out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
@@ -86,6 +100,8 @@ class MonkeyWrench:
         utm_index_fpath = os.path.join(out_index_fpath, "utm.csv")
         unindexed_fpath = os.path.join(out_index_fpath, "unindexed.csv")
         dumped_ts_fpath = os.path.join(lidar_dir, "timestamps.npz.lz4")
+        # Non-sorted list of outputs used in reporting if check is True.
+        status = []
 
         def _get_lidar_time(lidar_uri):
             try:
@@ -160,15 +176,17 @@ class MonkeyWrench:
         # Recall WGS84 messages are at 10Hz so we have to be a bit more lax than when checking pose assoc
         bad_offs = wgs84_delta > 0.10
         print(bad_offs.sum(), "bad offsets")
-        if bad_offs.sum() > 0:
-            print(np.where(bad_offs))
-            print()
+        # if bad_offs.sum() > 0:
+        #     print(np.where(bad_offs))
+        #     print()
 
         lidars_with_wgs84 = []
         assert len(sweep_times) == len(bad_offs) == len(wgs84_corr_idx)
         assert len(valid_sample_uris) == len(sweep_times)
-        for sweep_uri, sweep_time, bad_off, wgs84_idx in zip(valid_sample_uris, sweep_times, bad_offs, wgs84_corr_idx):
+        for sweep_uri, sweep_time, bad_off, wgs84_idx in zip(valid_sample_uris, sweep_times, wgs84_delta, wgs84_corr_idx):
+            bad_off = wgs84_delta > 0.10
             if bad_off:
+                status.append((sweep_uri, sweep_time, f"bad raw WGS84 offset, {wgs84_delta:.4f}s"))
                 # TODO Should we flag these in the index?
                 continue
 
@@ -193,14 +211,17 @@ class MonkeyWrench:
 
 
     def index_camera(self, log_id: str, cam_name: CamName, out_index_fpath: Optional[str] = None,
-                    check_images: bool = False):
+                    check: bool = False):
         """Please see `index_all_cameras` for info."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
 
         log_root = os.path.join(self._root, log_id.lstrip("/"))
         log_reader = LogReader(log_root_uri=log_root)
         cam_dir = os.path.join(log_root, "cameras", cam_name.value.lstrip("/"))
-        problems = []
+
+        # Collects diagnostics for writing the health report, if check is True. The diagnostics will NOT be sorted and
+        # may contain duplicates.
+        status = []
 
         # if out_index_fpath is None:
         #     out_index_fpath = os.path.join(log_root, "index", f"{cam_name}.geojson")
@@ -212,6 +233,7 @@ class MonkeyWrench:
         utm_index_fpath = os.path.join(out_index_fpath, "utm.csv")
         out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
         unindexed_fpath = os.path.join(out_index_fpath, "unindexed.csv")
+        report_fpath = os.path.join(out_index_fpath, "report.csv")
 
         # if not os.path.exists(os.path.join(log_root, "all_poses.npz.lz4")):
         #     continue
@@ -241,38 +263,42 @@ class MonkeyWrench:
             # Keep track of the log ID in the index, so we can merge indexes easily.
             img_fpath_in_root = "/".join(img_fpath.split("/")[-5:])
 
+            timestamp_s = -1
             with in_fs.open(meta_fpath) as meta_f:
                 try:
                     # The tolist actually extracts a dict...
                     meta = np.load(meta_f, allow_pickle=True).tolist()
-                    index.append((meta["capture_seconds"], img_fpath_in_root, meta["shutter_seconds"],
+                    timestamp_s = meta["capture_seconds"]
+                    index.append((timestamp_s, img_fpath_in_root, meta["shutter_seconds"],
                                 meta["sequence_counter"], meta["gain_db"]))
-                except UnpicklingError:
+                except UnpicklingError as err:
                     # TODO(andrei): Remove this hack once you re-extract with your ETL code
                     # hack for corrupted metadata, which should be fixed in the latest ETL
-                    err_msg = f"WARNING: Error reading metadata {meta_fpath = }"
-                    problems.append(err_msg)
-                    print(err_msg)
+                    err_msg = f"WARNING: UnpicklingError reading metadata, {str(err)}"
+                    status.append((meta_fpath, timestamp_s, err_msg))
+                    print(meta_fpath, err_msg)
                     continue
                 except ModuleNotFoundError:
                     # TODO(andrei): Remove this one too
                     # seems like corrupted pickles can trigger this, oof
-                    err_msg = f"WARNING: Error reading metadata {meta_fpath = }"
-                    problems.append(err_msg)
-                    print(err_msg)
+                    err_msg = f"WARNING: ModuleNotFoundError reading metadata {str(err)}"
+                    status.append((meta_fpath, timestamp_s, err_msg))
+                    print(meta_fpath, err_msg)
                     continue
 
-            if check_images:
+            if check:
                 try:
                     img = Image.open(img_fpath)
                     img.verify()
                     # This will actually read the image data!
                     img_np = np.asarray(img)
-                    if img_np.shape != (1200, 1920, 3):
-                        problems.append(f"WARNING: {img_fpath} has unexpected size {img_np.shape}")
+                    if img_np.shape != EXPECTED_IMAGE_SIZE:
+                        status.append((img_fpath, timestamp_s, f"WARNING: unexpected size {img_np.shape}"))
+                    else:
+                        status.append((img_fpath, timestamp_s, "OK"))
                 except Exception as e:
-                    err_msg = f"WARNING: Error reading image {img_fpath = }"
-                    problems.append(err_msg)
+                    err_msg = f"WARNING: General error reading image {str(e)}"
+                    status.append((img_fpath, timestamp_s, err_msg))
                     print(err_msg)
                     continue
 
@@ -284,6 +310,7 @@ class MonkeyWrench:
         unindexed_frames = []
         for img_row in tqdm(image_index):
             img_time = float(img_row[0])
+            img_fpath = img_row[1]
             mrp_idx = np.searchsorted(utm_times, img_time, side="left")
             mrp_idx = mrp_idx + 1
             if mrp_idx >= len(utm_poses):
@@ -291,7 +318,9 @@ class MonkeyWrench:
             delta_s = abs(img_time - mrp_poses["time"][mrp_idx])
             if delta_s > 0.1:
                 # NOTE(andrei): This is just an indexing limitation, not a true error IMO.
-                print(f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]")
+                # print(f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]")
+                error = f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]"
+                status.append((img_fpath, img_time, error))
                 unindexed_frames.append(img_row[1])
             else:
                 imgs_with_pose.append((utm_poses[mrp_idx], mrp_poses[mrp_idx], img_row))
@@ -344,11 +373,21 @@ class MonkeyWrench:
                 [mrp_pose["x"], mrp_pose["y"], mrp_pose["z"],
                 mrp_pose["roll"], mrp_pose["pitch"], mrp_pose["yaw"], mrp_pose["submap_id"]] + list(img_row))
 
+        if check:
+            # TODO(andrei): Write actual report here.
+            # NOTE: The report may have duplicates, since an image may be missing a pose _AND_ be corrupted. The outputs
+            # are not sorted by time or anything.
+            with out_fs.open(report_fpath, "w") as csvfile:
+                writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                writer.writerow(["img_fpath_in_cam", "timestamp", "status"])
+                for path, timestamp, message in status:
+                    writer.writerow([path, timestamp, message])
+
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
         report += f"(log_root = {log_root})\n"
-        report += f"{len(problems)} problems found:\n"
-        for problem in problems:
+        report += f"{len(status)} problems found:\n"
+        for problem in status:
             report += "\t -" + problem + "\n"
         report += ""
 

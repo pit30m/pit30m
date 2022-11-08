@@ -142,6 +142,11 @@ class LogReader:
 
     @cached_property
     def continuous_pose_dense(self) -> np.ndarray:
+        """Smooth pose in an arbitrary reference frame.
+
+        Not useful for global localization, since each log will have its own coordinate system, but useful for SLAM-like
+        evaluation, since you will have a continuous pose trajectory.
+        """
         pose_data = []
         # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
