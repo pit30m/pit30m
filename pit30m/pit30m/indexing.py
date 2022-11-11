@@ -26,7 +26,7 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
     # Fortunately, for such small intervals, linear interpolation should be OK.
     result = np.zeros(query_timestamps.shape, dtype=np.int64)
 
-    # XXX(andrei): np.interpolate, yo!
+    # TODO(andrei): speed up further with np.interpolate
     for q_idx, q_ts in enumerate(query_timestamps):
         target_idx = np.searchsorted(target_timestamps, q_ts, side="left")
         prev = target_idx - 1

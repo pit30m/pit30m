@@ -58,7 +58,7 @@ class MonkeyWrench:
                                 check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
                                 check its shape too, etc.
         """
-        self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        # self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
 
     def merge_indexes(self, log_ids: List[str]):
@@ -86,8 +86,6 @@ class MonkeyWrench:
         check: bool = False
     ):
         """Same as 'index_all_cameras', except for the LiDAR sweeps."""
-        if check:
-            raise RuntimeError("XXX not implemented yet")
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
         out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
@@ -100,8 +98,10 @@ class MonkeyWrench:
         utm_index_fpath = os.path.join(out_index_fpath, "utm.csv")
         unindexed_fpath = os.path.join(out_index_fpath, "unindexed.csv")
         dumped_ts_fpath = os.path.join(lidar_dir, "timestamps.npz.lz4")
+        report_fpath = os.path.join(out_index_fpath, "report.csv")
+
         # Non-sorted list of outputs used in reporting if check is True.
-        status = []
+        stats = []
 
         def _get_lidar_time(lidar_uri):
             try:
@@ -109,36 +109,50 @@ class MonkeyWrench:
                     with lz4.frame.open(compressed_f, "rb") as f:
                         lidar_data = np.load(f)
                         point_times = lidar_data["seconds"]
-                        return point_times.min(), point_times.max(), point_times.mean(), np.median(point_times), lidar_data["points"].shape
-                        # sweep_delta_s = point_times.max() - point_times.min()
-            except EOFError:
-                # Some files may be corrupted? I'll need to triple check this with the diagnostic tools.
-                print("EOFError", lidar_uri)
-                return None
 
-        # TODO(andrei): This seems difficult to leverage as the number of timestamps seems to differ from the number of
-        # dumped sweeps, so aligning the two would be challenging. Perhaps I could just use this data to check some of
-        # my assumptions later.
+                        if lidar_data["points"].ndim != 2 or lidar_data["points"].shape[-1] != 3:
+                            return "Error", lidar_uri, "Unexpected shape for points: {}".format(lidar_data["points"].shape)
+                        if lidar_data["points"].dtype != np.float32:
+                            return "Error", lidar_uri, "Unexpected dtype for points: {}".format(lidar_data["points"].dtype)
+                        if lidar_data["points_H_sensor"].ndim != 2 or lidar_data["points_H_sensor"].shape[-1] != 3:
+                            return "Error", lidar_uri, "Unexpected shape for points_H_sensor: {}".format(lidar_data["points_H_sensor"].shape)
+                        if lidar_data["points_H_sensor"].dtype != np.float32:
+                            return "Error", lidar_uri, "Unexpected dtype for points_H_sensor: {}".format(lidar_data["points_H_sensor"].dtype)
+                        if len(lidar_data["intensity"]) != len(lidar_data["points"]):
+                            return "Error", lidar_uri, "Unexpected shape for intensity: {} vs. {} points".format(lidar_data["intensity"].shape, lidar_data["points"].shape)
+                        if len(lidar_data["seconds"]) != len(lidar_data["points"]):
+                            return "Error", lidar_uri, "Unexpected shape for point times: {} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape)
+
+                        return "OK", lidar_uri, point_times.min(), point_times.max(), point_times.mean(), np.median(point_times), lidar_data["points"].shape
+            except EOFError:
+                # print("EOFError", lidar_uri)
+                return "Error", lidar_uri, "EOFError"
+
+        # TODO(andrei): Directly using the timestamps file seems difficult to leverage as the number of timestamps seems
+        # to differ from the number of dumped sweeps, so aligning the two would be challenging. Perhaps I could just use
+        # this data to check some of my assumptions later.
         #
         # with in_fs.open(dumped_ts_fpath, "rb") as compressed_f:
         #     with lz4.frame.open(compressed_f, "rb") as f:
         #         timestamps = np.load(f)["data"]
-        #         import ipdb; ipdb.set_trace()
-        #         print()
 
         sample_uris = in_fs.glob(os.path.join(lidar_dir, "*", "*.npz.lz4"))
-        # sample_uris = sample_uris[:1000]
+        print(f"Will analyze and index {len(sample_uris)} samples")
         pool = Parallel(n_jobs=-1, verbose=10)
         time_stats = pool(delayed(_get_lidar_time)(lidar_uri) for lidar_uri in sample_uris)
         raw_wgs84 = log_reader.raw_wgs84_poses_dense
 
         sweep_times_raw = []
         valid_sample_uris = []
-        for sample_uri, time_stat_entry in zip(sample_uris, time_stats):
-            if time_stat_entry is None:
-                print(f"WARNING: Failed to read {sample_uri}")
+        for sample_uri, result in zip(sample_uris, time_stats):
+            status = result[0]
+            if status != "OK":
+                err_msg = f"ERROR: {str(result[2:])}"
+                print(err_msg, sample_uri)
+                stats.append((sample_uri, -1, err_msg))
                 continue
-            (min_s, max_s, mean_s, med_s, shape) = time_stat_entry
+
+            (min_s, max_s, mean_s, med_s, shape) = result[2:]
             sweep_delta_s = max_s - min_s
             if abs(sweep_delta_s - 0.1) > 0.01:
                 print(f"{sample_uri}: sweep_delta_s = {sweep_delta_s:.4f}s | pcd.{shape = }")
@@ -154,6 +168,9 @@ class MonkeyWrench:
                 sweep_times_raw.append(med_s)
             else:
                 raise ValueError("Unknown sweep time convention: " + sweep_time_convention)
+
+            stats.append((sample_uri, sweep_times_raw[-1], "OK"))
+
 
         sweep_times = np.array(sweep_times_raw)
         del sample_uri
@@ -183,10 +200,10 @@ class MonkeyWrench:
         lidars_with_wgs84 = []
         assert len(sweep_times) == len(bad_offs) == len(wgs84_corr_idx)
         assert len(valid_sample_uris) == len(sweep_times)
-        for sweep_uri, sweep_time, bad_off, wgs84_idx in zip(valid_sample_uris, sweep_times, wgs84_delta, wgs84_corr_idx):
-            bad_off = wgs84_delta > 0.10
+        for sweep_uri, sweep_time, wgs84_delta_sample, wgs84_idx in tqdm(zip(valid_sample_uris, sweep_times, wgs84_delta, wgs84_corr_idx)):
+            bad_off = wgs84_delta_sample > 0.10
             if bad_off:
-                status.append((sweep_uri, sweep_time, f"bad raw WGS84 offset, {wgs84_delta:.4f}s"))
+                stats.append((sweep_uri, sweep_time, f"bad raw WGS84 offset, {wgs84_delta_sample:.4f}s"))
                 # TODO Should we flag these in the index?
                 continue
 
@@ -209,6 +226,30 @@ class MonkeyWrench:
             for wgs84_row, lidar_row in lidars_with_wgs84:
                 spamwriter.writerow(list(wgs84_row) + list(lidar_row))
 
+        if check:
+            # NOTE: The report may have duplicates, since an image may be missing a pose _AND_ be corrupted. The outputs
+            # are not sorted by time or anything.
+            with out_fs.open(report_fpath, "w") as csvfile:
+                writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                writer.writerow(["lidar_uri", "timestamp", "status"])
+                for path, timestamp, message in stats:
+                    writer.writerow([path, timestamp, message])
+
+        report = ""
+        report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
+        report += f"(log_root = {log_root})\n"
+        report += f"{len(stats)} samples analyzed."
+        n_problems = len([x for x in stats if x[2] != "OK"])
+        report += f"{n_problems} problems found."
+        # for problem in status:
+        #     report += "\t -" + problem + "\n"
+        report += ""
+        print(report)
+
+        if check:
+            print("\n\nWrote detailed health report to", report_fpath)
+        else:
+            print("Did not compute or dump detailed report.")
 
     def index_camera(self, log_id: str, cam_name: CamName, out_index_fpath: Optional[str] = None,
                     check: bool = False):
@@ -274,14 +315,14 @@ class MonkeyWrench:
                 except UnpicklingError as err:
                     # TODO(andrei): Remove this hack once you re-extract with your ETL code
                     # hack for corrupted metadata, which should be fixed in the latest ETL
-                    err_msg = f"WARNING: UnpicklingError reading metadata, {str(err)}"
+                    err_msg = f"ERROR: UnpicklingError reading metadata, {str(err)}"
                     status.append((meta_fpath, timestamp_s, err_msg))
                     print(meta_fpath, err_msg)
                     continue
                 except ModuleNotFoundError:
                     # TODO(andrei): Remove this one too
                     # seems like corrupted pickles can trigger this, oof
-                    err_msg = f"WARNING: ModuleNotFoundError reading metadata {str(err)}"
+                    err_msg = f"ERROR: ModuleNotFoundError reading metadata {str(err)}"
                     status.append((meta_fpath, timestamp_s, err_msg))
                     print(meta_fpath, err_msg)
                     continue
@@ -293,49 +334,48 @@ class MonkeyWrench:
                     # This will actually read the image data!
                     img_np = np.asarray(img)
                     if img_np.shape != EXPECTED_IMAGE_SIZE:
-                        status.append((img_fpath, timestamp_s, f"WARNING: unexpected size {img_np.shape}"))
+                        status.append((img_fpath, timestamp_s, f"ERROR: unexpected size {img_np.shape}"))
                     else:
                         status.append((img_fpath, timestamp_s, "OK"))
                 except Exception as e:
-                    err_msg = f"WARNING: General error reading image {str(e)}"
+                    err_msg = f"ERROR: General error reading image {str(e)}"
                     status.append((img_fpath, timestamp_s, err_msg))
                     print(err_msg)
                     continue
 
         # Sort by the capture time so we can easily search images by a timestamp
         image_index = sorted(index, key=lambda x: x[0])
+        image_times = [entry[0] for entry in image_index]
 
         imgs_with_pose = []
         imgs_with_wgs84 = []
         unindexed_frames = []
-        for img_row in tqdm(image_index):
-            img_time = float(img_row[0])
+        utm_and_mrp_index = associate(image_times, utm_times)
+        matched_timestamps = utm_times[utm_and_mrp_index]
+        deltas = np.abs(matched_timestamps - image_times)
+        # invalid_times = deltas > 0.1
+        for img_row, delta_s in zip(image_index, deltas):
             img_fpath = img_row[1]
-            mrp_idx = np.searchsorted(utm_times, img_time, side="left")
-            mrp_idx = mrp_idx + 1
-            if mrp_idx >= len(utm_poses):
-                mrp_idx = len(utm_poses) - 1
-            delta_s = abs(img_time - mrp_poses["time"][mrp_idx])
+            img_time = float(img_row[0])
             if delta_s > 0.1:
-                # NOTE(andrei): This is just an indexing limitation, not a true error IMO.
-                # print(f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]")
                 error = f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]"
                 status.append((img_fpath, img_time, error))
-                unindexed_frames.append(img_row[1])
+                unindexed_frames.append(img_row)
             else:
-                imgs_with_pose.append((utm_poses[mrp_idx], mrp_poses[mrp_idx], img_row))
+                imgs_with_pose.append(img_row)
 
-            wgs84_idx = np.searchsorted(raw_wgs84_times, img_time, side="left")
-            wgs84_idx += 1
-            if wgs84_idx >= len(raw_wgs84_data):
-                wgs84_idx = len(raw_wgs84_data) - 1
 
-            delta_wgs_s = abs(img_time - raw_wgs84_times[wgs84_idx])
+        raw_wgs84_index = associate(image_times, raw_wgs84_times)
+        matched_raw_wgs84_timestamps = raw_wgs84_times[raw_wgs84_index]
+        raw_wgs84_deltas = np.abs(matched_raw_wgs84_timestamps - image_times)
+        for img_row, delta_wgs_s in zip(image_index, raw_wgs84_deltas):
+            img_fpath = img_row[1]
+            img_time = float(img_row[0])
             if delta_wgs_s > 0.5:
-                print(f"WARNING: {img_time = } does not have a valid WGS84 coordinate in this log [{delta_s = }]")
+                error = f"WARNING: {img_time = } does not have a valid raw WGS84 pose in this log [{delta_wgs_s = }]"
+                status.append((img_fpath, img_time, error))
             else:
-                imgs_with_wgs84.append((raw_wgs84_data[wgs84_idx], img_row))
-
+                imgs_with_wgs84.append(img_row)
 
         # TODO(andrei): Don't write CP, because then you get nonsense when aggregating across logs.
         # with open(out_index_fpath, "w", newline="") as csvfile:
@@ -353,7 +393,6 @@ class MonkeyWrench:
                 spamwriter.writerow(list(wgs84_row) + list(img_row))
 
         # Write a text file with all samples which could not be matched to an accurate pose.
-        # NOTE(andrei): Doing the same for WGS84 is a nice-to-have, but not a priority.
         with out_fs.open(unindexed_fpath, "w", newline="") as csvfile:
             spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
             spamwriter.writerow(["img_fpath_in_cam"])
@@ -369,12 +408,12 @@ class MonkeyWrench:
                 utm_e, utm_n = utm_pose
                 # timestamp, valid, submap, x,y,z,roll,pitch,yaw = mrp_pose
                 # TODO(andrei): Add altitude here.
-                writer.writerow([mrp_pose["time"], utm_e, utm_n, -1] +
-                [mrp_pose["x"], mrp_pose["y"], mrp_pose["z"],
-                mrp_pose["roll"], mrp_pose["pitch"], mrp_pose["yaw"], mrp_pose["submap_id"]] + list(img_row))
+                writer.writerow(
+                    [mrp_pose["time"], utm_e, utm_n, -1] +
+                    [mrp_pose["x"], mrp_pose["y"], mrp_pose["z"], mrp_pose["roll"], mrp_pose["pitch"], mrp_pose["yaw"],
+                    mrp_pose["submap_id"]] + list(img_row))
 
         if check:
-            # TODO(andrei): Write actual report here.
             # NOTE: The report may have duplicates, since an image may be missing a pose _AND_ be corrupted. The outputs
             # are not sorted by time or anything.
             with out_fs.open(report_fpath, "w") as csvfile:
@@ -383,16 +422,20 @@ class MonkeyWrench:
                 for path, timestamp, message in status:
                     writer.writerow([path, timestamp, message])
 
+
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
         report += f"(log_root = {log_root})\n"
         report += f"{len(status)} problems found:\n"
-        for problem in status:
-            report += "\t -" + problem + "\n"
+        # for problem in status:
+        #     report += "\t -" + problem + "\n"
         report += ""
-
-        # TODO(andrei): Should we write a receipt if there were no problems?
         print(report)
+
+        if check:
+            print("\n\nWrote detailed health report to", report_fpath)
+        else:
+            print("Did not compute or dump detailed report.")
 
         return report
 
@@ -408,28 +451,9 @@ class MonkeyWrench:
         pass
 
 
-    def diagnose(self, dataset_base: str):
-        # TODO(andrei): Check that the dataset is valid---all logs.
-        # TODO(andrei): Unify with the indexing functions.
-        pass
-
-    def diagnose_log(self, dataset_base: str, log_id: str) -> None:
-        self._diagnose_lidar(dataset_base, log_id)
-        self._diagnose_misc(dataset_base, log_id)
-
-    def diagnose_log_cameras(self, dataset_base: str, log_id: str) -> None:
-        for cam in CamName:
-            self.diagnose_log_camera(dataset_base, log_id, cam)
-
-    def diagnose_log_camera(self, dataset_base: str, log_uri: str) -> None:
-        fs = fsspec.filesystem(urlparse(dataset_base).scheme)
-        log_root_uri = os.path.join(dataset_base, log_uri)
-        log_reader = LogReader(log_root_uri)
-
-
-
     def _diagnose_misc(self, dataset_base: str, log_uri: str) -> None:
         """Loads and prints misc data, hopefully raising errors if something is corrupted."""
+        # TODO(andrei): Hook this up with the indexing functions.
         dbp = urlparse(dataset_base)
         fs = fsspec.filesystem(dbp.scheme)
 
@@ -484,9 +508,8 @@ class MonkeyWrench:
                 print(f"{len(all_wgs84) = }")
                 print("All WGS84 poses OK")
 
-
-
     def _diagnose_lidar(self, dataset_base: str, log_uri: str) -> None:
+        # Old code for loading a lot of LiDAR into the same coordinate frame for Open3D visualization.
         ld = dataset_base + log_uri + "/lidars/"
         dbp = urlparse(dataset_base)
         fs = fsspec.filesystem(dbp.scheme)
