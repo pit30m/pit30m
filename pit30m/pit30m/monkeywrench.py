@@ -77,6 +77,10 @@ class MonkeyWrench:
         for cam in CamName:
             self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
 
+    def get_lidar_dir(self, log_root: str, lidar_name: str) -> str:
+        return os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
+
+
     def index_lidar(
         self,
         log_id: str,
@@ -90,7 +94,7 @@ class MonkeyWrench:
         out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
         log_reader = LogReader(log_root_uri=log_root)
-        lidar_dir = os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
+        lidar_dir = self.get_lidar_dir(log_root, lidar_name)
         if out_index_fpath is None:
             out_index_fpath = os.path.join(lidar_dir, "index")
 
@@ -111,22 +115,22 @@ class MonkeyWrench:
                         point_times = lidar_data["seconds"]
 
                         if lidar_data["points"].ndim != 2 or lidar_data["points"].shape[-1] != 3:
-                            return "Error", lidar_uri, "Unexpected shape for points: {}".format(lidar_data["points"].shape)
+                            return "Error", lidar_uri, "unexpected-points-shape", "{}".format(lidar_data["points"].shape)
                         if lidar_data["points"].dtype != np.float32:
-                            return "Error", lidar_uri, "Unexpected dtype for points: {}".format(lidar_data["points"].dtype)
+                            return "Error", lidar_uri, "unexpected-points-dtype", str(lidar_data["points"].dtype)
                         if lidar_data["points_H_sensor"].ndim != 2 or lidar_data["points_H_sensor"].shape[-1] != 3:
-                            return "Error", lidar_uri, "Unexpected shape for points_H_sensor: {}".format(lidar_data["points_H_sensor"].shape)
+                            return "Error", lidar_uri, "unexpected-points_H_sensor-shape", str(lidar_data["points_H_sensor"].shape)
                         if lidar_data["points_H_sensor"].dtype != np.float32:
-                            return "Error", lidar_uri, "Unexpected dtype for points_H_sensor: {}".format(lidar_data["points_H_sensor"].dtype)
+                            return "Error", lidar_uri, "unexpected-points_H_sensor-dtype", str(lidar_data["points_H_sensor"].dtype)
                         if len(lidar_data["intensity"]) != len(lidar_data["points"]):
-                            return "Error", lidar_uri, "Unexpected shape for intensity: {} vs. {} points".format(lidar_data["intensity"].shape, lidar_data["points"].shape)
+                            return "Error", lidar_uri, "unexpected-intensity-shape", "{} vs. {} points".format(lidar_data["intensity"].shape, lidar_data["points"].shape)
                         if len(lidar_data["seconds"]) != len(lidar_data["points"]):
-                            return "Error", lidar_uri, "Unexpected shape for point times: {} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape)
+                            return "Error", lidar_uri, "unexpected-point-time-shape", "{} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape)
 
                         return "OK", lidar_uri, point_times.min(), point_times.max(), point_times.mean(), np.median(point_times), lidar_data["points"].shape
-            except EOFError:
+            except EOFError as err:
                 # print("EOFError", lidar_uri)
-                return "Error", lidar_uri, "EOFError"
+                return "Error", lidar_uri, f"EOFError: {str(err)}"
 
         # TODO(andrei): Directly using the timestamps file seems difficult to leverage as the number of timestamps seems
         # to differ from the number of dumped sweeps, so aligning the two would be challenging. Perhaps I could just use
@@ -147,9 +151,9 @@ class MonkeyWrench:
         for sample_uri, result in zip(sample_uris, time_stats):
             status = result[0]
             if status != "OK":
-                err_msg = f"ERROR: {str(result[2:])}"
+                err_msg = f"error_{str(result[2:])}"
                 print(err_msg, sample_uri)
-                stats.append((sample_uri, -1, err_msg))
+                stats.append(tuple([sample_uri, -1] + list(result[2:])))
                 continue
 
             (min_s, max_s, mean_s, med_s, shape) = result[2:]
@@ -169,7 +173,7 @@ class MonkeyWrench:
             else:
                 raise ValueError("Unknown sweep time convention: " + sweep_time_convention)
 
-            stats.append((sample_uri, sweep_times_raw[-1], "OK"))
+            stats.append((sample_uri, sweep_times_raw[-1], "OK", "n/A"))
 
 
         sweep_times = np.array(sweep_times_raw)
@@ -203,7 +207,7 @@ class MonkeyWrench:
         for sweep_uri, sweep_time, wgs84_delta_sample, wgs84_idx in tqdm(zip(valid_sample_uris, sweep_times, wgs84_delta, wgs84_corr_idx)):
             bad_off = wgs84_delta_sample > 0.10
             if bad_off:
-                stats.append((sweep_uri, sweep_time, f"bad raw WGS84 offset, {wgs84_delta_sample:.4f}s"))
+                stats.append((sweep_uri, sweep_time, "bad-raw-WGS84-offset", f"{wgs84_delta_sample:.4f}s"))
                 # TODO Should we flag these in the index?
                 continue
 
@@ -231,9 +235,9 @@ class MonkeyWrench:
             # are not sorted by time or anything.
             with out_fs.open(report_fpath, "w") as csvfile:
                 writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                writer.writerow(["lidar_uri", "timestamp", "status"])
-                for path, timestamp, message in stats:
-                    writer.writerow([path, timestamp, message])
+                writer.writerow(["lidar_uri", "timestamp", "status", "details"])
+                for path, timestamp, message, details in stats:
+                    writer.writerow([path, timestamp, message, details])
 
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
@@ -440,6 +444,11 @@ class MonkeyWrench:
         return report
 
     def aggregate_reports(self, dataset_base: str, log_list_fpath: Optional[str] = None):
+        """
+
+        Note that this will typically be the command you run locally, as reading a few CSVs for each log is more than
+        doable locally.
+        """
         # TODO(andrei): Given a list of logs (or None = all of them), look for reports, read, and aggregate.
         # for instance, for the first batch I could ETL 100 logs and iterate with a txt with their IDs. Once I'm happy,
         # I can proceed with all other logs.
@@ -450,6 +459,58 @@ class MonkeyWrench:
         # 'aggregate_reports' is the reduce.
         pass
 
+
+    def validate_log_report(self, log_id: str, write_receipt: bool = True):
+        camera_summary = []
+        lidar_ok = self.validate_lidar_report(log_id)
+        other_summary = []
+
+        # TODO(andrei): Validate camera, lidar, and other report. If things are OK, write receipt but trace back to the
+        # reports used.
+
+        pass
+
+    def validate_lidar_report(self, log_id: str, lidar_name: str = "hdl64e_12_middle_front_roof"):
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        lidar_dir = self.get_lidar_dir(log_root, lidar_name)
+        out_index_fpath = os.path.join(lidar_dir, "index")
+        report_loc = os.path.join(out_index_fpath, "report.csv")
+
+        ok = 0
+        errors = []
+        warnings = []
+
+        with open(report_loc, "r") as csvfile:
+            reader = csv.reader(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            header = next(reader)
+
+            for sample_uri, timestamp, status, detail in reader:
+                if status == "OK":
+                    ok += 1
+                    continue
+                elif status == "bad-raw-WGS84-offset":
+                    offset_s = float(detail.rstrip("s"))
+                    if offset_s > 0.2:
+                        # Be a little lenient
+                        warnings.append( (sample_uri, timestamp, status, detail) )
+                else:
+                    print(f"Problem with {sample_uri}: {status}")
+                    errors.append( (sample_uri, timestamp, status, detail) )
+
+        if len(errors) > 0:
+            print(f"Found {len(errors)} errors in {log_id}.")
+            return False
+
+        if len(warnings) > 0:
+            print(f"Found {len(warnings)} warnings in {log_id}.")
+            to_show = 15
+            for i in range(len(warnings[:to_show])):
+                print(f"\t - {warnings[i]}")
+            if len(warnings) > to_show:
+                print(f"\t - ... and {len(warnings) - to_show} more.")
+
+        print("OK samples: ", ok)
+        return True
 
     def _diagnose_misc(self, dataset_base: str, log_uri: str) -> None:
         """Loads and prints misc data, hopefully raising errors if something is corrupted."""
