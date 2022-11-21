@@ -221,7 +221,7 @@ class LogReader:
 
         TODO(andrei): Degrees or radians?
 
-        Rows are: (timestamp_seconds, lon, lat, alt, roll, pitch, yaw).
+        Rows are: (timestamp_seconds, lon, lat, alt, roll, pitch, yaw (heading)).
         """
         raw = self.raw_wgs84_poses
         wgs84_data = []
@@ -230,9 +230,9 @@ class LogReader:
                             wgs84["longitude"],
                             wgs84["latitude"],
                             wgs84["altitude"],
-                            wgs84["heading"],
+                            wgs84["roll"],
                             wgs84["pitch"],
-                            wgs84["roll"]))
+                            wgs84["heading"]))
         wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
         return wgs84_data
 

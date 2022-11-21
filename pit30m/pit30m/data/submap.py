@@ -76,8 +76,8 @@ class Map:
         Assumes all poses are within the same UTM zone, which holds for all of Pit30M.
         """
         assert len(map_poses_xyz) == len(submap_ids)
-        print(map_poses_xyz.shape)
-        print(map_poses_xyz.dtype)
+        # print(map_poses_xyz.shape)
+        # print(map_poses_xyz.dtype)
 
         off_utm = []
         for map_uuid in submap_ids:

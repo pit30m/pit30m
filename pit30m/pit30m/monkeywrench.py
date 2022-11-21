@@ -1,9 +1,11 @@
-
 import os
 import ipdb
 import csv
 import geojson
+import json
 from pickle import UnpicklingError
+import multiprocessing as mp
+import logging
 from datetime import datetime
 import numpy as np
 import lz4
@@ -22,6 +24,14 @@ from joblib import Parallel, delayed
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
+CAM_META_UNPICKLING_ERROR = "cam_meta_unpickling_error"
+CAM_UNEXPECTED_SHAPE = "cam_unexpected_shape"
+CAM_UNEXPECTED_CORRUPTION = "cam_unexpected_corruption"
+# Expected to happen a lot, should be a warning unless the whole log is wrong
+CAM_UNMATCHED_POSE = "cam_unmatched_pose"
+CAM_UNMATCHED_RAW_WGS84 = "cam_unmatched_raw_wgs84"
+
+TQDM_MIN_INTERVAL_S = 3
 
 class MonkeyWrench:
 
@@ -38,6 +48,11 @@ class MonkeyWrench:
         """
         self._root = dataset_root
         self._metadata_root = metadata_root
+        self._logger = logging.getLogger(__name__)
+        self._logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        self._logger.addHandler(handler)
 
 
     def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False):
@@ -66,20 +81,8 @@ class MonkeyWrench:
         # TODO(andrei): Implement this.
         ...
 
-    def index_all_cameras(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False):
-        """Create an index of the images in the given log.
-
-        This is useful for quickly finding images in a given region, or for finding the closest image to a given GPS
-        location.
-
-        Building large indexes from scratch can take a while, even on the order of hours on some machines.
-        """
-        for cam in CamName:
-            self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
-
     def get_lidar_dir(self, log_root: str, lidar_name: str) -> str:
         return os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
-
 
     def index_lidar(
         self,
@@ -204,7 +207,10 @@ class MonkeyWrench:
         lidars_with_wgs84 = []
         assert len(sweep_times) == len(bad_offs) == len(wgs84_corr_idx)
         assert len(valid_sample_uris) == len(sweep_times)
-        for sweep_uri, sweep_time, wgs84_delta_sample, wgs84_idx in tqdm(zip(valid_sample_uris, sweep_times, wgs84_delta, wgs84_corr_idx)):
+        for sweep_uri, sweep_time, wgs84_delta_sample, wgs84_idx in tqdm(
+            zip(valid_sample_uris, sweep_times, wgs84_delta, wgs84_corr_idx),
+            mininterval=TQDM_MIN_INTERVAL_S,
+        ):
             bad_off = wgs84_delta_sample > 0.10
             if bad_off:
                 stats.append((sweep_uri, sweep_time, "bad-raw-WGS84-offset", f"{wgs84_delta_sample:.4f}s"))
@@ -255,11 +261,45 @@ class MonkeyWrench:
         else:
             print("Did not compute or dump detailed report.")
 
+
+    def index_all_cameras(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False,
+    n_jobs: int = 1):
+        """Create an index of the images in the given log.
+
+        This is useful for quickly finding images in a given region, or for finding the closest image to a given GPS
+        location.
+
+        Building large indexes from scratch can take a while, even on the order of hours on some machines.
+
+        Args:
+            log_id:     ID of the log to process within the established root.
+            out_index_fpath:   Path to the output index file. If not given, the index will be written relative to
+                                the respective camera roots (highly recommended).
+            check:      If True, will check the integrity of the log in great detail, including image properties and
+                        shapes, and write a detailed report to the output index
+            n_jobs:     Number of jobs to run in parallel. The maximum is one per camera, so 7. Set to 1 for sequential,
+                        and to 0 to auto-set.
+        """
+        if n_jobs == 0:
+            n_jobs = len(CamName)
+
+        if n_jobs == 1:
+            for cam in CamName:
+                self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
+        else:
+            with mp.Pool(processes=n_jobs) as pool:
+                pool.starmap(
+                    self.index_camera,
+                    [(log_id, cam_name, out_index_fpath, check, index)
+                    for index, cam_name in enumerate(CamName)],
+                )
+
     def index_camera(self, log_id: str, cam_name: CamName, out_index_fpath: Optional[str] = None,
-                    check: bool = False):
+                    check: bool = False, pb_position: int = 0):
         """Please see `index_all_cameras` for info."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
 
+        self._logger.info("Setting up log reader to process camera %s", cam_name.value)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
         log_reader = LogReader(log_root_uri=log_root)
         cam_dir = os.path.join(log_root, "cameras", cam_name.value.lstrip("/"))
@@ -283,13 +323,6 @@ class MonkeyWrench:
         # if not os.path.exists(os.path.join(log_root, "all_poses.npz.lz4")):
         #     continue
 
-        # TODO(andrei): Check if these WGS84 values are raw or adjusted based on localization since it makes a big
-        # impact on any localization or reconstruction work. For indexing we should be fine either way.
-        #
-        # NOTE(andrei): WGS84 data is coarser, 10Hz, not 100Hz.
-        raw_wgs84_data = log_reader.raw_wgs84_poses_dense
-        raw_wgs84_times = np.array(raw_wgs84_data[:, 0])
-
         # print(pose_times.shape)
 
         cp_dense = log_reader.continuous_pose_dense
@@ -299,37 +332,50 @@ class MonkeyWrench:
         mrp_poses = log_reader.map_relative_pose_dense
         # Check a dataset invariant as a smoke tests
         assert len(mrp_poses) == len(utm_poses)
-        utm_times = utm_poses[:, 0]
+        mrp_times = mrp_poses["time"]
 
+        check_status = "deep checking" if check else "NO checking !!!"
+        self._logger.info("Starting to index camera data. [%s]", check_status)
         index = []
-        for entry in tqdm(in_fs.glob(os.path.join(cam_dir, "*", "*.webp"))):
+        n_errors_so_far = 0
+        progress_bar = tqdm(
+            # XXX
+            sorted(in_fs.glob(os.path.join(cam_dir, "*", "*.webp")))[:1000],
+            mininterval=TQDM_MIN_INTERVAL_S,
+            position=pb_position,
+            desc=f"{cam_name.value:<18}",
+        )
+        for entry in progress_bar:
             img_fpath = entry
             meta_fpath = entry.replace(".day", ".meta").replace(".night", ".meta").replace(".webp", ".npy")
             # Keep track of the log ID in the index, so we can merge indexes easily.
             img_fpath_in_root = "/".join(img_fpath.split("/")[-5:])
+            progress_bar.set_postfix(n_errors_so_far=n_errors_so_far)
 
-            timestamp_s = -1
+            timestamp_s = -1.0
             with in_fs.open(meta_fpath) as meta_f:
                 try:
                     # The tolist actually extracts a dict...
                     meta = np.load(meta_f, allow_pickle=True).tolist()
-                    timestamp_s = meta["capture_seconds"]
+                    timestamp_s = float(meta["capture_seconds"])
                     index.append((timestamp_s, img_fpath_in_root, meta["shutter_seconds"],
                                 meta["sequence_counter"], meta["gain_db"]))
                 except UnpicklingError as err:
                     # TODO(andrei): Remove this hack once you re-extract with your ETL code
                     # hack for corrupted metadata, which should be fixed in the latest ETL
-                    err_msg = f"ERROR: UnpicklingError reading metadata, {str(err)}"
-                    status.append((meta_fpath, timestamp_s, err_msg))
-                    print(meta_fpath, err_msg)
+                    status.append((meta_fpath, timestamp_s, CAM_META_UNPICKLING_ERROR, str(err)))
+                    n_errors_so_far += 1
                     continue
-                except ModuleNotFoundError:
+                except ModuleNotFoundError as err:
+                    status.append((meta_fpath, timestamp_s, CAM_META_UNPICKLING_ERROR, str(err)))
+                    n_errors_so_far += 1
+                    continue
                     # TODO(andrei): Remove this one too
                     # seems like corrupted pickles can trigger this, oof
-                    err_msg = f"ERROR: ModuleNotFoundError reading metadata {str(err)}"
-                    status.append((meta_fpath, timestamp_s, err_msg))
-                    print(meta_fpath, err_msg)
-                    continue
+                    # err_msg = f"ERROR: ModuleNotFoundError reading metadata {str(err)}"
+                    # status.append((meta_fpath, timestamp_s, err_msg))
+                    # print(meta_fpath, err_msg)
+                    # continue
 
             if check:
                 try:
@@ -338,50 +384,61 @@ class MonkeyWrench:
                     # This will actually read the image data!
                     img_np = np.asarray(img)
                     if img_np.shape != EXPECTED_IMAGE_SIZE:
-                        status.append((img_fpath, timestamp_s, f"ERROR: unexpected size {img_np.shape}"))
+                        status.append((img_fpath, timestamp_s, CAM_UNEXPECTED_SHAPE, str(img_np.shape)))
+                        n_errors_so_far += 1
+                        continue
                     else:
-                        status.append((img_fpath, timestamp_s, "OK"))
-                except Exception as e:
-                    err_msg = f"ERROR: General error reading image {str(e)}"
-                    status.append((img_fpath, timestamp_s, err_msg))
-                    print(err_msg)
+                        status.append((img_fpath, timestamp_s, "OK", ""))
+                except Exception as err:
+                    # err_msg = f"ERROR: General error reading image {str(e)}"
+                    status.append((img_fpath, timestamp_s, CAM_UNEXPECTED_CORRUPTION, str(err)))
+                    n_errors_so_far += 1
                     continue
 
         # Sort by the capture time so we can easily search images by a timestamp
         image_index = sorted(index, key=lambda x: x[0])
-        image_times = [entry[0] for entry in image_index]
+        image_times = np.array([entry[0] for entry in image_index])
+
+        # NOTE(andrei): WGS84 data is coarser, 10Hz, not 100Hz.
+        self._logger.info("Reading WGS84 data")
+        raw_wgs84_data = log_reader.raw_wgs84_poses_dense
+        raw_wgs84_times = np.array(raw_wgs84_data[:, 0])
 
         imgs_with_pose = []
         imgs_with_wgs84 = []
         unindexed_frames = []
-        utm_and_mrp_index = associate(image_times, utm_times)
-        matched_timestamps = utm_times[utm_and_mrp_index]
+        # The 'max_delta_s' is just a logging thing. We will carefully inspect the deltas in the report analysis part,
+        # but for now we only want WARNINGs to be printed if there's some serious problems. A couple of minutes of
+        # missing poses (WGS84 or MRP-derived UTM) at the start of a log is expected (especially the localizer-based
+        # MRP), and not a huge issue.
+        utm_and_mrp_index = associate(image_times, mrp_times, max_delta_s=60 * 10)
+        matched_timestamps = mrp_times[utm_and_mrp_index]
         deltas = np.abs(matched_timestamps - image_times)
         # invalid_times = deltas > 0.1
-        for img_row, delta_s in zip(image_index, deltas):
+        for img_row, pose_idx, delta_s in zip(image_index, utm_and_mrp_index, deltas):
             img_fpath = img_row[1]
             img_time = float(img_row[0])
             if delta_s > 0.1:
-                error = f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]"
-                status.append((img_fpath, img_time, error))
+                # error = f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]"
+                status.append((img_fpath, img_time, CAM_UNMATCHED_POSE, str(delta_s)))
                 unindexed_frames.append(img_row)
             else:
-                imgs_with_pose.append(img_row)
+                imgs_with_pose.append((utm_poses[pose_idx, :], mrp_poses[pose_idx], img_row))
 
-
-        raw_wgs84_index = associate(image_times, raw_wgs84_times)
+        raw_wgs84_index = associate(image_times, raw_wgs84_times, max_delta_s=60 * 10)
         matched_raw_wgs84_timestamps = raw_wgs84_times[raw_wgs84_index]
         raw_wgs84_deltas = np.abs(matched_raw_wgs84_timestamps - image_times)
-        for img_row, delta_wgs_s in zip(image_index, raw_wgs84_deltas):
+        for img_row, wgs_idx, delta_wgs_s in zip(image_index, raw_wgs84_index, raw_wgs84_deltas):
             img_fpath = img_row[1]
             img_time = float(img_row[0])
             if delta_wgs_s > 0.5:
-                error = f"WARNING: {img_time = } does not have a valid raw WGS84 pose in this log [{delta_wgs_s = }]"
-                status.append((img_fpath, img_time, error))
+                # error = f"WARNING: {img_time = } does not have a valid raw WGS84 pose in this log [{delta_wgs_s = }]"
+                status.append((img_fpath, img_time, CAM_UNMATCHED_RAW_WGS84, str(delta_wgs_s)))
             else:
-                imgs_with_wgs84.append(img_row)
+                imgs_with_wgs84.append((raw_wgs84_data[wgs_idx, :], img_row))
 
-        # TODO(andrei): Don't write CP, because then you get nonsense when aggregating across logs.
+        # TODO(andrei): Should we write CP? If we do we need clear docs, because using it will get you nonsense when
+        # aggregating across logs.
         # with open(out_index_fpath, "w", newline="") as csvfile:
         #     spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
         #     spamwriter.writerow(["capture_time", "poses_and_differentials_valid", "x", "y", "z", "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
@@ -392,7 +449,11 @@ class MonkeyWrench:
             out_fs.mkdir(out_index_fpath)
         with out_fs.open(raw_wgs84_index_fpath, "w", newline="") as csvfile:
             spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            spamwriter.writerow(["timestamp", "longitude", "latitude", "altitude", "heading", "pitch", "roll", "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
+            spamwriter.writerow([
+                "timestamp",
+                "longitude", "latitude", "altitude",
+                "roll", "pitch", "yaw",
+                "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
             for wgs84_row, img_row in imgs_with_wgs84:
                 spamwriter.writerow(list(wgs84_row) + list(img_row))
 
@@ -405,13 +466,15 @@ class MonkeyWrench:
 
         with out_fs.open(utm_index_fpath, "w", newline="") as csvfile:
             writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            writer.writerow(["timestamp", "utm_e", "utm_n", "mrp_x", "mrp_y", "mrp_z", "mrp_roll", "mrp_pitch",
-                "mrp_yaw", "mrp_submap_id", "capture_seconds", "img_fpath_in_cam",
-                "shutter_seconds", "sequence_counter", "gain_db"])
+            writer.writerow([
+                "pose_timestamp", "utm_e", "utm_n", "utm_alt",
+                "mrp_x", "mrp_y", "mrp_z", "mrp_roll", "mrp_pitch", "mrp_yaw",
+                "mrp_submap_id",
+                "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
             for utm_pose, mrp_pose, img_row in imgs_with_pose:
                 utm_e, utm_n = utm_pose
                 # timestamp, valid, submap, x,y,z,roll,pitch,yaw = mrp_pose
-                # TODO(andrei): Add altitude here.
+                # TODO(andrei): Add UTM altitude here.
                 writer.writerow(
                     [mrp_pose["time"], utm_e, utm_n, -1] +
                     [mrp_pose["x"], mrp_pose["y"], mrp_pose["z"], mrp_pose["roll"], mrp_pose["pitch"], mrp_pose["yaw"],
@@ -423,14 +486,14 @@ class MonkeyWrench:
             with out_fs.open(report_fpath, "w") as csvfile:
                 writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
                 writer.writerow(["img_fpath_in_cam", "timestamp", "status"])
-                for path, timestamp, message in status:
-                    writer.writerow([path, timestamp, message])
+                for path, timestamp, message, details in status:
+                    writer.writerow([path, timestamp, message, details])
 
 
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
         report += f"(log_root = {log_root})\n"
-        report += f"{len(status)} problems found:\n"
+        report += f"{len(status)} potential problems found ({n_errors_so_far} errors):\n"
         # for problem in status:
         #     report += "\t -" + problem + "\n"
         report += ""
@@ -470,7 +533,12 @@ class MonkeyWrench:
 
         pass
 
-    def validate_lidar_report(self, log_id: str, lidar_name: str = "hdl64e_12_middle_front_roof"):
+    def validate_lidar_report(
+        self,
+        log_id: str,
+        lidar_name: str = "hdl64e_12_middle_front_roof",
+        acceptable_wgs84_delay_s: float = 0.25,
+    ):
         log_root = os.path.join(self._root, log_id.lstrip("/"))
         lidar_dir = self.get_lidar_dir(log_root, lidar_name)
         out_index_fpath = os.path.join(lidar_dir, "index")
@@ -490,11 +558,11 @@ class MonkeyWrench:
                     continue
                 elif status == "bad-raw-WGS84-offset":
                     offset_s = float(detail.rstrip("s"))
-                    if offset_s > 0.2:
+                    if offset_s > acceptable_wgs84_delay_s:
                         # Be a little lenient
                         warnings.append( (sample_uri, timestamp, status, detail) )
                 else:
-                    print(f"Problem with {sample_uri}: {status}")
+                    # print(f"Problem with {sample_uri}: {status}")
                     errors.append( (sample_uri, timestamp, status, detail) )
 
         if len(errors) > 0:

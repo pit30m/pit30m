@@ -18,6 +18,14 @@ To preview some example very early stage data, check out the [tutorial notebook]
 
 More tutorials coming soon.
 
+## Features
+
+ * Framework-agnostic multiprocessing-safe log reader objects
+ * PyTorch dataloaders
+ * Very efficient native S3 support through [AWS-authored PyTorch-optimized S3 DataPipes](https://aws.amazon.com/blogs/machine-learning/announcing-the-amazon-s3-plugin-for-pytorch/).
+ * Support for non-S3 data sources, for users who wish to copy the dataset, or parts of it, to their own storage.
+ * Tons of examples and tutorials. See `examples/` for more information.
+
 
 ## Citation
 
