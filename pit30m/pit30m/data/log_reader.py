@@ -126,6 +126,15 @@ class LogReader:
             # print()
             return data
 
+    def stereo_calib(self):
+        calib_fpath = os.path.join(self._log_root_uri, "stereo_camera_calibration.npy")
+        with fsspec.open(calib_fpath, "rb") as f:
+            data = np.load(f, allow_pickle=True, encoding="latin1")
+            # Ugly code since I numpy-saved a dict...
+            data = data.tolist()["data"]
+            # TODO(andrei): Validate, clean, document, write an example, etc.
+            return data
+
 
     @cached_property
     def raw_pose_data(self) -> np.ndarray:
@@ -162,8 +171,16 @@ class LogReader:
         return pose_index
 
     @cached_property
-    def map_relative_pose_dense(self) -> np.ndarray:
+    def map_relative_poses_dense(self) -> np.ndarray:
         """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap."""
+        # Poses contain just the data as a structured numpy array. Each pose object contains a continuous, smooth,
+        # log-specific pose, and a map-relative pose. The map relative pose (MRP) takes vehicle points into the
+        # current submap, whose ID is indicated by the 'submap' field of the MRP.
+        #
+        # Be sure to check the 'valid' flag of the poses before using them!
+        #
+        # The data also has pose and velocity covariance information, but I have never used directly so I don't know
+        # if it's well-calibrated.
         pose_data = []
         # XXX(andrei): Document the timestamps carefully. Remember that GPS time can be confusing!
         for pose in self.raw_pose_data:
@@ -201,7 +218,7 @@ class LogReader:
 
         TODO(andrei): Update to provide altitude.
         """
-        mrp = self.map_relative_pose_dense
+        mrp = self.map_relative_poses_dense
         xyzs = np.stack((mrp["x"], mrp["y"], mrp["z"]), axis=1)
         # Handle submap IDs which were truncated upon encoded due to ending with a zero.
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]

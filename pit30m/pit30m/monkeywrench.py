@@ -11,6 +11,7 @@ import numpy as np
 import lz4
 import fire
 import fsspec
+import yaml
 from PIL import Image
 import lzma
 from lzma import LZMAError
@@ -30,6 +31,12 @@ CAM_UNEXPECTED_CORRUPTION = "cam_unexpected_corruption"
 # Expected to happen a lot, should be a warning unless the whole log is wrong
 CAM_UNMATCHED_POSE = "cam_unmatched_pose"
 CAM_UNMATCHED_RAW_WGS84 = "cam_unmatched_raw_wgs84"
+INVALID_REPORT = "invalid_report"
+
+VALIDATION_CANARY_FNAME = ".pit30m_valid_v0"
+ETL_CANARY_FNAME = ".pit30m_done"
+
+MIN_LIDAR_FRAMES = 10 * 60 * 3
 
 TQDM_MIN_INTERVAL_S = 3
 
@@ -74,7 +81,12 @@ class MonkeyWrench:
                                 check its shape too, etc.
         """
         # self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        # self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        res = self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        if len(res) > 0:
+            print("WARNING: misc non-sensor data had errors. See above for more information.")
+
+        print("Log indexing complete.")
 
     def merge_indexes(self, log_ids: List[str]):
         """Given a list of log IDs with indexed data, merge the indexes into a single index."""
@@ -96,8 +108,14 @@ class MonkeyWrench:
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
         out_fs = fsspec.filesystem(urlparse(out_index_fpath).scheme)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
+
+        if not os.path.isdir(log_root):
+            raise RuntimeError(f"Log {log_id} directory does not exist at all. Indexing failed.")
+
         log_reader = LogReader(log_root_uri=log_root)
         lidar_dir = self.get_lidar_dir(log_root, lidar_name)
+        etl_canary = os.path.join(lidar_dir, ETL_CANARY_FNAME)
+
         if out_index_fpath is None:
             out_index_fpath = os.path.join(lidar_dir, "index")
 
@@ -109,6 +127,11 @@ class MonkeyWrench:
 
         # Non-sorted list of outputs used in reporting if check is True.
         stats = []
+
+
+        if not os.path.isfile(etl_canary):
+            raise RuntimeError(f"Log {log_id} was not dumped yet as its 'ETL finished' canary file was not found; " \
+                "can't index it.")
 
         def _get_lidar_time(lidar_uri):
             try:
@@ -132,8 +155,9 @@ class MonkeyWrench:
 
                         return "OK", lidar_uri, point_times.min(), point_times.max(), point_times.mean(), np.median(point_times), lidar_data["points"].shape
             except EOFError as err:
-                # print("EOFError", lidar_uri)
-                return "Error", lidar_uri, f"EOFError: {str(err)}"
+                return "Error", lidar_uri, "EOFError", str(err)
+            except Exception as err:
+                return "Error", lidar_uri, "unknown-error", str(err)
 
         # TODO(andrei): Directly using the timestamps file seems difficult to leverage as the number of timestamps seems
         # to differ from the number of dumped sweeps, so aligning the two would be challenging. Perhaps I could just use
@@ -180,7 +204,7 @@ class MonkeyWrench:
 
 
         sweep_times = np.array(sweep_times_raw)
-        del sample_uri
+        # del sample_uri
 
         # TODO(andrei): Index by MRP!
         # poses = log_reader.raw_poses
@@ -248,7 +272,7 @@ class MonkeyWrench:
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
         report += f"(log_root = {log_root})\n"
-        report += f"{len(stats)} samples analyzed."
+        report += f"{len(stats)} samples analyzed.\n"
         n_problems = len([x for x in stats if x[2] != "OK"])
         report += f"{n_problems} problems found."
         # for problem in status:
@@ -329,7 +353,7 @@ class MonkeyWrench:
         cp_times = cp_dense[:, 0]
 
         utm_poses = log_reader.utm_poses_dense
-        mrp_poses = log_reader.map_relative_pose_dense
+        mrp_poses = log_reader.map_relative_poses_dense
         # Check a dataset invariant as a smoke tests
         assert len(mrp_poses) == len(utm_poses)
         mrp_times = mrp_poses["time"]
@@ -339,8 +363,7 @@ class MonkeyWrench:
         index = []
         n_errors_so_far = 0
         progress_bar = tqdm(
-            # XXX
-            sorted(in_fs.glob(os.path.join(cam_dir, "*", "*.webp")))[:1000],
+            sorted(in_fs.glob(os.path.join(cam_dir, "*", "*.webp"))),
             mininterval=TQDM_MIN_INTERVAL_S,
             position=pb_position,
             desc=f"{cam_name.value:<18}",
@@ -506,12 +529,23 @@ class MonkeyWrench:
 
         return report
 
-    def aggregate_reports(self, dataset_base: str, log_list_fpath: Optional[str] = None):
+    def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
         """
-
         Note that this will typically be the command you run locally, as reading a few CSVs for each log is more than
         doable locally.
+
+        Args:
+            logs:       Either a file path to a text file with a list of log IDs to validate, or a comma-separated list
+                        of log IDs to validate.
         """
+        if os.path.isfile(logs):
+            log_list = []
+            with open(logs, "r", encoding="utf-8") as f:
+                for line in f:
+                    log_list.append(line.strip())
+        else:
+            log_list = [entry.strip() for entry in logs.split(",")]
+
         # TODO(andrei): Given a list of logs (or None = all of them), look for reports, read, and aggregate.
         # for instance, for the first batch I could ETL 100 logs and iterate with a txt with their IDs. Once I'm happy,
         # I can proceed with all other logs.
@@ -520,54 +554,105 @@ class MonkeyWrench:
         #
         # In other words, 'index' (or diagnose, still TBD) is the map, possibly running in parallel, and
         # 'aggregate_reports' is the reduce.
-        pass
+        issues = {}
+        n_valid = 0
+
+        for log_id in log_list:
+            valid, summary = self.validate_log_report(log_id, check_receipt=check_receipt, write_receipt=write_receipt)
+            if valid:
+                n_valid += 1
+            else:
+                issues[log_id] = summary
+
+        total = len(log_list)
+        print(f"{n_valid} / {total} logs are valid.")
+        if len(issues) > 0:
+            print(f"{len(issues)} log(s) have issues:")
+            for log_id, summary in issues.items():
+                print(f"\t{log_id}: {summary}")
 
 
-    def validate_log_report(self, log_id: str, write_receipt: bool = True):
-        camera_summary = []
-        lidar_ok = self.validate_lidar_report(log_id)
-        other_summary = []
+    def validate_log_report(self, log_id: str, check_receipt: bool = True, write_receipt: bool = True):
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+
+        if not os.path.isdir(log_root):
+            return (False, f"Log root directory for {log_id} does not exist under {self._root}.")
+
+        camera_summary = ""
+        lidar_ok, lidar_status = self.validate_lidar_report(log_id, check_receipt=check_receipt, write_receipt=write_receipt)
+        camera_ok = True # TODO hook up
+        other_summary = ""
 
         # TODO(andrei): Validate camera, lidar, and other report. If things are OK, write receipt but trace back to the
         # reports used.
 
-        pass
+        if lidar_ok and camera_ok:
+            return (True, "")
+        else:
+            return (False, lidar_status + camera_summary + other_summary)
+
 
     def validate_lidar_report(
         self,
         log_id: str,
         lidar_name: str = "hdl64e_12_middle_front_roof",
         acceptable_wgs84_delay_s: float = 0.25,
+        check_receipt: bool = True,
+        write_receipt: bool = True,
     ):
         log_root = os.path.join(self._root, log_id.lstrip("/"))
         lidar_dir = self.get_lidar_dir(log_root, lidar_name)
         out_index_fpath = os.path.join(lidar_dir, "index")
         report_loc = os.path.join(out_index_fpath, "report.csv")
+        canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
 
         ok = 0
         errors = []
         warnings = []
 
+        fs = fsspec.filesystem(urlparse(self._root).scheme)
+        if check_receipt and fs.isfile(canary_loc):
+            print("Skipping validation of", lidar_dir, "since it has a receipt.")
+            return (True, "canary_found")
+
+        if not os.path.isfile(report_loc):
+            return (False, "no_report")
+
         with open(report_loc, "r") as csvfile:
             reader = csv.reader(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
             header = next(reader)
-
-            for sample_uri, timestamp, status, detail in reader:
-                if status == "OK":
-                    ok += 1
-                    continue
-                elif status == "bad-raw-WGS84-offset":
-                    offset_s = float(detail.rstrip("s"))
-                    if offset_s > acceptable_wgs84_delay_s:
-                        # Be a little lenient
-                        warnings.append( (sample_uri, timestamp, status, detail) )
-                else:
-                    # print(f"Problem with {sample_uri}: {status}")
-                    errors.append( (sample_uri, timestamp, status, detail) )
+            if len(header) != 4:
+                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+            else:
+                for sample_uri, timestamp, status, detail in reader:
+                    if status == "OK":
+                        ok += 1
+                        continue
+                    elif status == "bad-raw-WGS84-offset":
+                        offset_s = float(detail.rstrip("s"))
+                        if offset_s > acceptable_wgs84_delay_s:
+                            # Be a little lenient
+                            warnings.append( (sample_uri, timestamp, status, detail) )
+                    else:
+                        # print(f"Problem with {sample_uri}: {status}")
+                        errors.append( (sample_uri, timestamp, status, detail) )
 
         if len(errors) > 0:
             print(f"Found {len(errors)} errors in {log_id}.")
-            return False
+            for err in errors[:10]:
+                print("\t", err)
+            if len(errors) > 10:
+                print("...")
+
+            return (False, f"{len(errors)} errors found")
+
+        # Validation for unexpectedly short logs
+        #
+        if ok < MIN_LIDAR_FRAMES:
+            print(len(errors))
+            print(ok)
+            print(len(warnings))
+            return (False, f"not_enough_lidar_frames_{ok}")
 
         if len(warnings) > 0:
             print(f"Found {len(warnings)} warnings in {log_id}.")
@@ -578,64 +663,164 @@ class MonkeyWrench:
                 print(f"\t - ... and {len(warnings) - to_show} more.")
 
         print("OK samples: ", ok)
-        return True
+        return (True, "checked")
 
-    def _diagnose_misc(self, dataset_base: str, log_uri: str) -> None:
-        """Loads and prints misc data, hopefully raising errors if something is corrupted."""
-        # TODO(andrei): Hook this up with the indexing functions.
-        dbp = urlparse(dataset_base)
-        fs = fsspec.filesystem(dbp.scheme)
+    def diagnose_misc(self, log_id: str, out_index_fpath: str, check: bool) -> List[Tuple[str, str]]:
+        """Diagnoses non-sensor data, like poses, GPS, metadata, etc. Returns a list of errors, empty if all is well."""
+        fs = fsspec.filesystem(urlparse(self._root).scheme)
+        log_root_uri = os.path.join(self._root, log_id)
+        log_reader = LogReader(log_root_uri=log_root_uri)
+
+        errors: List[Tuple[str, str]] = []
 
         # Active district information is not very important
-        with lzma.open(dataset_base + log_uri + "/active_district.npz.xz", "rb") as f:
-            ad = np.load(f)["data"]
-            assert isinstance(ad, np.ndarray)
-            print("Active district OK:", ad.shape, ad.dtype)
+        try:
+            with fs.open(os.path.join(log_root_uri, "active_district.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f) as f:
+                    ad = np.load(f)["data"]
+                    if not isinstance(ad, np.ndarray):
+                        errors.append(("active_district", "not_ndarray"))
+
+                    print("Active district OK:", ad.shape, ad.dtype)
+        except (RuntimeError, ValueError) as err:
+            errors.append(("active district", "invalid" + str(err)))
 
         # TODO(andrei): We probably want to provide poses as something uncompressed, since LZMA decoding is a few
         # seconds per log. For training we will cache this in some index files, but in general it's annoying to wait
         # 4-5 seconds on a modern PC to read 50MiB of data...
-        with lzma.open(dataset_base + log_uri + "/all_poses.npz.xz", "rb") as f:
-            # Poses contain just the data as a structured numpy array. Each pose object contains a continuous, smooth,
-            # log-specific pose, and a map-relative pose. The map relative pose (MRP) takes vehicle points into the
-            # current submap, whose ID is indicated by the 'submap' field of the MRP.
-            #
-            # The data also has pose and velocity covariance information, but I have never used directly so I don't know
-            # if it's well-calibrated.
-            #
-            # Be sure to check the 'valid' flag of the poses before using them!
-            #
-            # Poses are provided at 100Hz.
-            all_poses = np.load(f)["data"]
-            print(len(all_poses), "poses read")
-            print("All poses read OK")
+        try:
+            mrp = log_reader.map_relative_poses_dense
+            assert mrp["time"].min() > 0
+        except (RuntimeError, ValueError) as err:
+            errors.append(("map_relative_poses_dense", "invalid"))
 
-        # TODO(andrei): Support parsing this pseudo YAML. Right now it's not very important but may be useful if people
-        # want raw wheel encoder data, steering angle, etc.
-        # with lzma.open(dataset_base + log_uri + "/all_vehicle_data.npz.xz", "rb") as f:
-        #     all_vd = np.load(f)
-        #     print(list(all_vd.keys()))
-        #     ipdb.set_trace()
-        #     print("All vd OK")
+        try:
+            raw_wgs_dense = log_reader.raw_wgs84_poses_dense
+            if raw_wgs_dense[:, 0].min() <= 0:
+                errors.append(("raw_wgs84_poses_dense", "negative or zero time"))
+            min_lat = raw_wgs_dense[:, 2].min()
+            max_lat = raw_wgs_dense[:, 2].max()
+            if min_lat < 40.00:
+                errors.append(("raw_wgs84_poses_dense", f"invalid min latitude {min_lat:.8f}"))
+            if max_lat > 40.95:
+                errors.append(("raw_wgs84_poses_dense", f"invalid max latitude {max_lat:.8f}"))
+        except (RuntimeError, ValueError) as err:
+            errors.append(("raw_wgs84_poses_dense", "general error: " + str(e)))
+
+        # NOTE(andrei): Very long story, but semi-valid YAML due to weird syntax quirks. We can probably transpile these
+        # files into JSON without too much effort if there is interest.
+        if not fs.isfile(os.path.join(log_root_uri, "all_vehicle_data.pseudo_yaml.npy.lz4")):
+            errors.append(("all_vehicle_data", "missing"))
 
         # NOTE(andrei): The metadata won't be super useful to end users, since it's mostly internal stuff like a list
         # of active sensors, calibration, etc., which is already obvious by looking at the data files.
-        with open(dataset_base + log_uri + "/log_metadata.json", "r") as f:
-            meta = json.load(f)
-            print("Metadata OK")
+        try:
+            with fs.open(os.path.join(self._root, log_id, "log_metadata.json"), "r") as f:
+                meta = json.load(f)
+                assert meta is not None
+        except (RuntimeError, ValueError) as err:
+            errors.append(("log_metadata", "invalid" + str(err)))
+
+        try:
+            # These are perception outputs but not reliable, don't assume them to be very good, I have no idea what
+            # model was used when we dumped this data. It was very likely not a good production one! :(
+            with fs.open(os.path.join(log_root_uri, "detections.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    # Failure to specify the encoding causes an unpicling error.
+                    dets = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    # print(dets.files)
+                    assert dets is not None
+            print(len(dets), "dets")
+        except (RuntimeError, ValueError) as err:
+            errors.append(("detections", "invalid" + str(err)))
+
+        try:
+            with fs.open(os.path.join(log_root_uri, "auto_state.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    auto_state = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    assert auto_state is not None
+
+        except (RuntimeError, ValueError) as err:
+            errors.append(("auto_state", "invalid" + str(err)))
+
+        try:
+            # Probably useless dump data. We should remove this as it's auxiliary data that's not really useful to end
+            # users.
+            with fs.open(os.path.join(log_root_uri, "fitted_trajectory.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    fitted_trajectory = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    assert fitted_trajectory is not None
+
+        except (RuntimeError, ValueError) as err:
+            errors.append(("fitted_trajectory", "invalid" + str(err)))
+
+        try:
+            log_reader.calib()
+        except (RuntimeError, ValueError) as err:
+            errors.append(("monocular_calib", "invalid" + str(err)))
+
+        try:
+            log_reader.stereo_calib()
+        except (RuntimeError, ValueError) as err:
+            errors.append(("stereo_calib", "invalid" + str(err)))
 
 
-        with fs.open(dataset_base + log_uri + "/wgs84.npz.xz", "rb") as lzma_f:
-            with lzma.open(lzma_f) as f:
-                # WGS84 poses with timestamp, long, lat, alt, heading, pitch, roll.
-                #
-                # ~10Hz
-                # TODO(andrei): Check whether these are inferred from MRP or not. I *think* for logs where localization is
-                # OK (i.e., most logs -- and we can always check pose validity flags!) these are properly post-processed,
-                # and not just biased filtered GPS, but I need to check. Plotting this with leaflet will make it obvious.
-                all_wgs84 = np.load(f)["data"]
-                print(f"{len(all_wgs84) = }")
-                print("All WGS84 poses OK")
+        try:
+            with fs.open(os.path.join(log_root_uri, "raw_calibration.yml"), "r") as raw_f:
+                cc = yaml.load(raw_f, Loader=SafeLoaderIgnoreUnknown)
+                assert cc is not None
+        except (RuntimeError, ValueError) as err:
+            errors.append(("raw_calibration", "invalid" + str(err)))
+
+        try:
+            with fs.open(os.path.join(log_root_uri, "raw_imu.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    raw_imu = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    assert raw_imu is not None
+                    print(raw_imu.dtype)
+                    print(len(raw_imu))
+                    assert raw_imu["packet_capture_time_s"].min() > 0
+        except RuntimeError as err:
+            errors.append(("raw_imu", "invalid" + str(err)))
+        except ValueError as err:
+            errors.append(("raw_imu", "invalid" + str(err)))
+
+        try:
+            with fs.open(os.path.join(log_root_uri, "raw_utms.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    raw_utm = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    assert raw_utm is not None
+                    # print(raw_utm.dtype)
+        except RuntimeError as err:
+            errors.append(("raw_utm", "invalid" + str(err)))
+
+        try:
+            with fs.open(os.path.join(log_root_uri, "traffic_lights.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    tl = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    assert tl is not None
+                    print(tl.dtype)
+                    print(len(tl))
+        except RuntimeError as err:
+            errors.append(("raw_utm", "invalid" + str(err)))
+
+        try:
+            with fs.open(os.path.join(log_root_uri, "vehicle_state.npz.lz4"), "rb") as raw_f:
+                with lz4.frame.open(raw_f, "rb") as f:
+                    vs = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                    assert vs is not None
+                    print(vs.dtype)
+                    print(len(vs))
+        except RuntimeError as err:
+            errors.append(("raw_utm", "invalid" + str(err)))
+
+        # TODO(andrei): Write this as a report entry!
+        if check and len(errors) > 0:
+            print(f"{len(errors)} errors found in {log_id}!")
+            for err in errors:
+                print("\t- " + str(err))
+
+        return errors
 
     def _diagnose_lidar(self, dataset_base: str, log_uri: str) -> None:
         # Old code for loading a lot of LiDAR into the same coordinate frame for Open3D visualization.
@@ -697,6 +882,14 @@ def _load_lidar(lidar_uri: str) -> Tuple[np.ndarray, np.ndarray]:
         except LZMAError:
             print("LZMA error reading LiDAR uri: ", lidar_uri)
             raise
+
+
+
+class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
+    def ignore_unknown(self, node):
+        return None
+
+SafeLoaderIgnoreUnknown.add_constructor(None, SafeLoaderIgnoreUnknown.ignore_unknown)
 
 
 if __name__ == "__main__":
