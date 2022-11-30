@@ -50,8 +50,8 @@ KNOWN_INCOMPLETE_CAMERAS = [
 
 
 class MonkeyWrench:
-
-    def __init__(self,
+    def __init__(
+        self,
         dataset_root: str = "s3://the/bucket",
         metadata_root: str = "file:///mnt/data/pit30m/",
     ) -> None:
@@ -69,7 +69,6 @@ class MonkeyWrench:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         self._logger.addHandler(handler)
-
 
     def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False):
         """Create index files for the raw data in the dataset.
@@ -114,7 +113,7 @@ class MonkeyWrench:
         lidar_name: str = "hdl64e_12_middle_front_roof",
         sweep_time_convention: str = "end",
         out_index_fpath: Optional[str] = None,
-        check: bool = False
+        check: bool = False,
     ):
         """Same as 'index_all_cameras', except for the LiDAR sweeps."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
@@ -140,10 +139,10 @@ class MonkeyWrench:
         # Non-sorted list of outputs used in reporting if check is True.
         stats = []
 
-
         if not os.path.isfile(etl_canary):
-            raise RuntimeError(f"Log {log_id} was not dumped yet as its 'ETL finished' canary file was not found; " \
-                "can't index it.")
+            raise RuntimeError(
+                f"Log {log_id} was not dumped yet as its 'ETL finished' canary file was not found; " "can't index it."
+            )
 
         def _get_lidar_time(lidar_uri):
             try:
@@ -153,19 +152,52 @@ class MonkeyWrench:
                         point_times = lidar_data["seconds"]
 
                         if lidar_data["points"].ndim != 2 or lidar_data["points"].shape[-1] != 3:
-                            return "Error", lidar_uri, "unexpected-points-shape", "{}".format(lidar_data["points"].shape)
+                            return (
+                                "Error",
+                                lidar_uri,
+                                "unexpected-points-shape",
+                                "{}".format(lidar_data["points"].shape),
+                            )
                         if lidar_data["points"].dtype != np.float32:
                             return "Error", lidar_uri, "unexpected-points-dtype", str(lidar_data["points"].dtype)
                         if lidar_data["points_H_sensor"].ndim != 2 or lidar_data["points_H_sensor"].shape[-1] != 3:
-                            return "Error", lidar_uri, "unexpected-points_H_sensor-shape", str(lidar_data["points_H_sensor"].shape)
+                            return (
+                                "Error",
+                                lidar_uri,
+                                "unexpected-points_H_sensor-shape",
+                                str(lidar_data["points_H_sensor"].shape),
+                            )
                         if lidar_data["points_H_sensor"].dtype != np.float32:
-                            return "Error", lidar_uri, "unexpected-points_H_sensor-dtype", str(lidar_data["points_H_sensor"].dtype)
+                            return (
+                                "Error",
+                                lidar_uri,
+                                "unexpected-points_H_sensor-dtype",
+                                str(lidar_data["points_H_sensor"].dtype),
+                            )
                         if len(lidar_data["intensity"]) != len(lidar_data["points"]):
-                            return "Error", lidar_uri, "unexpected-intensity-shape", "{} vs. {} points".format(lidar_data["intensity"].shape, lidar_data["points"].shape)
+                            return (
+                                "Error",
+                                lidar_uri,
+                                "unexpected-intensity-shape",
+                                "{} vs. {} points".format(lidar_data["intensity"].shape, lidar_data["points"].shape),
+                            )
                         if len(lidar_data["seconds"]) != len(lidar_data["points"]):
-                            return "Error", lidar_uri, "unexpected-point-time-shape", "{} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape)
+                            return (
+                                "Error",
+                                lidar_uri,
+                                "unexpected-point-time-shape",
+                                "{} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape),
+                            )
 
-                        return "OK", lidar_uri, point_times.min(), point_times.max(), point_times.mean(), np.median(point_times), lidar_data["points"].shape
+                        return (
+                            "OK",
+                            lidar_uri,
+                            point_times.min(),
+                            point_times.max(),
+                            point_times.mean(),
+                            np.median(point_times),
+                            lidar_data["points"].shape,
+                        )
             except EOFError as err:
                 return "Error", lidar_uri, "EOFError", str(err)
             except Exception as err:
@@ -214,7 +246,6 @@ class MonkeyWrench:
 
             stats.append((sample_uri, sweep_times_raw[-1], "OK", "n/A"))
 
-
         sweep_times = np.array(sweep_times_raw)
         # del sample_uri
 
@@ -259,16 +290,25 @@ class MonkeyWrench:
             # imgs_with_wgs84.append((wgs84_data[wgs84_idx], img_row))
             lidars_with_wgs84.append((raw_wgs84[wgs84_idx, :], (sweep_time, lidar_fpath)))
 
-
         # NOTE(andrei): For some rare sweeps (most first sweeps in a log) this will have gaps.
         # NOTE(andrei): The LiDAR is motion-compensated. TBD which timestamp is the canonical one.
         if not out_fs.exists(out_index_fpath):
             out_fs.mkdir(out_index_fpath)
         with out_fs.open(wgs84_index_fpath, "w", newline="") as csvfile:
-            spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            spamwriter.writerow([
-                "timestamp", "longitude", "latitude", "altitude", "heading", "pitch", "roll",
-                f"sweep_seconds_{sweep_time_convention}", "lidar_fpath"])
+            spamwriter = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
+            spamwriter.writerow(
+                [
+                    "timestamp",
+                    "longitude",
+                    "latitude",
+                    "altitude",
+                    "heading",
+                    "pitch",
+                    "roll",
+                    f"sweep_seconds_{sweep_time_convention}",
+                    "lidar_fpath",
+                ]
+            )
             for wgs84_row, lidar_row in lidars_with_wgs84:
                 spamwriter.writerow(list(wgs84_row) + list(lidar_row))
 
@@ -276,7 +316,7 @@ class MonkeyWrench:
             # NOTE: The report may have duplicates, since an image may be missing a pose _AND_ be corrupted. The outputs
             # are not sorted by time or anything.
             with out_fs.open(report_fpath, "w") as csvfile:
-                writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                writer = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
                 writer.writerow(["lidar_uri", "timestamp", "status", "details"])
                 for path, timestamp, message, details in stats:
                     writer.writerow([path, timestamp, message, details])
@@ -297,9 +337,9 @@ class MonkeyWrench:
         else:
             print("Did not compute or dump detailed report.")
 
-
-    def index_all_cameras(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False,
-    n_jobs: int = 1):
+    def index_all_cameras(
+        self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False, n_jobs: int = 1
+    ):
         """Create an index of the images in the given log.
 
         This is useful for quickly finding images in a given region, or for finding the closest image to a given GPS
@@ -326,12 +366,17 @@ class MonkeyWrench:
             with mp.Pool(processes=n_jobs) as pool:
                 pool.starmap(
                     self.index_camera,
-                    [(log_id, cam_name, out_index_fpath, check, index)
-                    for index, cam_name in enumerate(CamName)],
+                    [(log_id, cam_name, out_index_fpath, check, index) for index, cam_name in enumerate(CamName)],
                 )
 
-    def index_camera(self, log_id: str, cam_name: CamName, out_index_fpath: Optional[str] = None,
-                    check: bool = False, pb_position: int = 0):
+    def index_camera(
+        self,
+        log_id: str,
+        cam_name: CamName,
+        out_index_fpath: Optional[str] = None,
+        check: bool = False,
+        pb_position: int = 0,
+    ):
         """Please see `index_all_cameras` for info."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
 
@@ -399,8 +444,15 @@ class MonkeyWrench:
                     # The tolist actually extracts a dict...
                     meta = np.load(meta_f, allow_pickle=True).tolist()
                     timestamp_s = float(meta["capture_seconds"])
-                    index.append((timestamp_s, img_fpath_in_root, meta["shutter_seconds"],
-                                meta["sequence_counter"], meta["gain_db"]))
+                    index.append(
+                        (
+                            timestamp_s,
+                            img_fpath_in_root,
+                            meta["shutter_seconds"],
+                            meta["sequence_counter"],
+                            meta["gain_db"],
+                        )
+                    )
                 except UnpicklingError as err:
                     # TODO(andrei): Remove this hack once you re-extract with your ETL code
                     # hack for corrupted metadata, which should be fixed in the latest ETL
@@ -489,47 +541,81 @@ class MonkeyWrench:
         if not out_fs.exists(out_index_fpath):
             out_fs.mkdir(out_index_fpath)
         with out_fs.open(raw_wgs84_index_fpath, "w", newline="") as csvfile:
-            spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            spamwriter.writerow([
-                "timestamp",
-                "longitude", "latitude", "altitude",
-                "roll", "pitch", "yaw",
-                "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
+            spamwriter = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
+            spamwriter.writerow(
+                [
+                    "timestamp",
+                    "longitude",
+                    "latitude",
+                    "altitude",
+                    "roll",
+                    "pitch",
+                    "yaw",
+                    "capture_seconds",
+                    "img_fpath_in_cam",
+                    "shutter_seconds",
+                    "sequence_counter",
+                    "gain_db",
+                ]
+            )
             for wgs84_row, img_row in imgs_with_wgs84:
                 spamwriter.writerow(list(wgs84_row) + list(img_row))
 
         # Write a text file with all samples which could not be matched to an accurate pose.
         with out_fs.open(unindexed_fpath, "w", newline="") as csvfile:
-            spamwriter = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            spamwriter = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
             spamwriter.writerow(["img_fpath_in_cam"])
             for entry in unindexed_frames:
                 spamwriter.writerow([entry])
 
         with out_fs.open(utm_index_fpath, "w", newline="") as csvfile:
-            writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            writer.writerow([
-                "pose_timestamp", "utm_e", "utm_n", "utm_alt",
-                "mrp_x", "mrp_y", "mrp_z", "mrp_roll", "mrp_pitch", "mrp_yaw",
-                "mrp_submap_id",
-                "capture_seconds", "img_fpath_in_cam", "shutter_seconds", "sequence_counter", "gain_db"])
+            writer = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(
+                [
+                    "pose_timestamp",
+                    "utm_e",
+                    "utm_n",
+                    "utm_alt",
+                    "mrp_x",
+                    "mrp_y",
+                    "mrp_z",
+                    "mrp_roll",
+                    "mrp_pitch",
+                    "mrp_yaw",
+                    "mrp_submap_id",
+                    "capture_seconds",
+                    "img_fpath_in_cam",
+                    "shutter_seconds",
+                    "sequence_counter",
+                    "gain_db",
+                ]
+            )
             for utm_pose, mrp_pose, img_row in imgs_with_pose:
                 utm_e, utm_n = utm_pose
                 # timestamp, valid, submap, x,y,z,roll,pitch,yaw = mrp_pose
                 # TODO(andrei): Add UTM altitude here.
                 writer.writerow(
-                    [mrp_pose["time"], utm_e, utm_n, -1] +
-                    [mrp_pose["x"], mrp_pose["y"], mrp_pose["z"], mrp_pose["roll"], mrp_pose["pitch"], mrp_pose["yaw"],
-                    mrp_pose["submap_id"]] + list(img_row))
+                    [mrp_pose["time"], utm_e, utm_n, -1]
+                    + [
+                        mrp_pose["x"],
+                        mrp_pose["y"],
+                        mrp_pose["z"],
+                        mrp_pose["roll"],
+                        mrp_pose["pitch"],
+                        mrp_pose["yaw"],
+                        mrp_pose["submap_id"],
+                    ]
+                    + list(img_row)
+                )
 
         if check:
             # NOTE: The report may have duplicates, since an image may be missing a pose _AND_ be corrupted. The outputs
             # are not sorted by time or anything.
             with out_fs.open(report_fpath, "w") as csvfile:
-                writer = csv.writer(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                writer = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
                 writer.writerow(["img_fpath_in_cam", "timestamp", "status"])
                 for path, timestamp, message, details in status:
                     writer.writerow([path, timestamp, message, details])
-
 
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
@@ -589,7 +675,6 @@ class MonkeyWrench:
             for log_id, summary in issues.items():
                 print(f"\t{log_id}: {summary}")
 
-
     def validate_log_report(self, log_id: str, check_receipt: bool = True, write_receipt: bool = True):
         log_root = os.path.join(self._root, log_id.lstrip("/"))
 
@@ -602,20 +687,22 @@ class MonkeyWrench:
         camera_summary = ""
         all_cam_ok = True
         for cam in CamName:
-            cam_ok, message = self.validate_camera_report(log_id, cam, check_receipt=check_receipt, write_receipt=write_receipt)
+            cam_ok, message = self.validate_camera_report(
+                log_id, cam, check_receipt=check_receipt, write_receipt=write_receipt
+            )
             if not cam_ok:
                 camera_summary += f"\t{cam}: {message}\n"
                 all_cam_ok = False
-        lidar_ok, lidar_status = self.validate_lidar_report(log_id, check_receipt=check_receipt, write_receipt=write_receipt)
+        lidar_ok, lidar_status = self.validate_lidar_report(
+            log_id, check_receipt=check_receipt, write_receipt=write_receipt
+        )
 
         other_summary = ""
-
 
         if lidar_ok and all_cam_ok:
             return (True, "")
         else:
             return (False, lidar_status + camera_summary + other_summary)
-
 
     def diagnose_misc(self, log_id: str, out_index_fpath: str, check: bool) -> List[Tuple[str, str]]:
         """Diagnoses non-sensor data, like poses, GPS, metadata, etc. Returns a list of errors, empty if all is well."""
@@ -716,7 +803,6 @@ class MonkeyWrench:
         except (RuntimeError, ValueError) as err:
             errors.append(("stereo_calib", "invalid" + str(err)))
 
-
         try:
             with fs.open(os.path.join(log_root_uri, "raw_calibration.yml"), "r") as raw_f:
                 cc = yaml.load(raw_f, Loader=SafeLoaderIgnoreUnknown)
@@ -775,7 +861,7 @@ class MonkeyWrench:
             except RuntimeError as err:
                 errors.append(("vehicle_state", "invalid" + str(err)))
         else:
-                errors.append(("vehicle_state", "missing"))
+            errors.append(("vehicle_state", "missing"))
 
         # XXX(andrei): Write this as a report entry! Discriminate between WARNING and ERROR. The difference is about
         # which files are missing. E.g., tl states missing is a warning, but core metadata, poses, or calibratation
@@ -786,7 +872,6 @@ class MonkeyWrench:
                 print("\t- " + str(err))
 
         return errors
-
 
     def validate_camera_report(
         self,
@@ -845,7 +930,7 @@ class MonkeyWrench:
             return (False, "no_report")
 
         with open(report_loc, "r") as csvfile:
-            reader = csv.reader(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            reader = csv.reader(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
             header = next(reader)
             if len(header) != 4:
                 errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
@@ -858,10 +943,10 @@ class MonkeyWrench:
                         offset_s = float(detail.rstrip("s"))
                         if offset_s > acceptable_wgs84_delay_s:
                             # Be a little lenient
-                            warnings.append( (sample_uri, timestamp, status, detail) )
+                            warnings.append((sample_uri, timestamp, status, detail))
                     else:
                         # print(f"Problem with {sample_uri}: {status}")
-                        errors.append( (sample_uri, timestamp, status, detail) )
+                        errors.append((sample_uri, timestamp, status, detail))
 
         if len(errors) > 0:
             print(f"Found {len(errors)} errors in {log_id}.")
@@ -891,6 +976,7 @@ class MonkeyWrench:
         print("OK samples: ", ok)
         return (True, "checked")
 
+
 def print_list_with_limit(lst, limit: int) -> None:
     for entry in lst[:limit]:
         print(f"\t - {entry}")
@@ -898,12 +984,12 @@ def print_list_with_limit(lst, limit: int) -> None:
         print(f"\t - ... and {len(lst) - limit} more.")
 
 
-
 # Trick to bypass !binary parts of YAML files before we can support them. (They are low priority and not
 # very important anyway.)
 class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
     def ignore_unknown(self, node):
         return None
+
 
 SafeLoaderIgnoreUnknown.add_constructor(None, SafeLoaderIgnoreUnknown.ignore_unknown)
 
