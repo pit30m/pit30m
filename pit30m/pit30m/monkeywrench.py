@@ -1,7 +1,6 @@
 import os
 import ipdb
 import csv
-import geojson
 import json
 from pickle import UnpicklingError
 from dataclasses import dataclass
@@ -17,7 +16,7 @@ from PIL import Image
 import lzma
 from lzma import LZMAError
 from tqdm import tqdm
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 from urllib.parse import urlparse, urljoin
 from pit30m.camera import CamName
 from pit30m.data.log_reader import LogReader
@@ -32,6 +31,8 @@ CAM_UNEXPECTED_CORRUPTION = "cam_unexpected_corruption"
 # Expected to happen a lot, should be a warning unless the whole log is wrong
 CAM_UNMATCHED_POSE = "cam_unmatched_pose"
 CAM_UNMATCHED_RAW_WGS84 = "cam_unmatched_raw_wgs84"
+CAM_MEAN_TOO_LOW = "cam_mean_too_low"
+CAM_MEAN_TOO_HIGH = "cam_mean_too_high"
 INVALID_REPORT = "invalid_report"
 
 VALIDATION_CANARY_FNAME = ".pit30m_valid_v0"
@@ -47,6 +48,22 @@ KNOWN_INCOMPLETE_CAMERAS = [
     # Confirmed 2022-11-24 - only has hdcam_02_starboard_front_roof_wide
     "dc3d9c11-5ec7-41cd-d4e0-ec795cdae27d",
 ]
+
+
+@dataclass
+class CamReportSummary:
+    n_ok: int
+    warnings: List[str] = None
+    errors: List[str] = None
+
+    @property
+    def n_warns(self) -> int:
+        return len(self.warnings)
+
+    @property
+    def n_errs(self) -> int:
+        return len(self.errors)
+
 
 
 class MonkeyWrench:
@@ -70,7 +87,7 @@ class MonkeyWrench:
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         self._logger.addHandler(handler)
 
-    def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False):
+    def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True):
         """Create index files for the raw data in the dataset.
 
         At dump time, the dataset just contained numbered image files with small associated metadata files. This meant
@@ -88,9 +105,10 @@ class MonkeyWrench:
                                 check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
                                 check its shape too, etc.
         """
-        # self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        # self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         res = self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        # XXX(andrei): Turn the misc diagnosis into a mini report too.
         if len(res) > 0:
             print("WARNING: misc non-sensor data had errors. See above for more information.")
 
@@ -113,7 +131,7 @@ class MonkeyWrench:
         lidar_name: str = "hdl64e_12_middle_front_roof",
         sweep_time_convention: str = "end",
         out_index_fpath: Optional[str] = None,
-        check: bool = False,
+        check: bool = True,
     ):
         """Same as 'index_all_cameras', except for the LiDAR sweeps."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
@@ -338,7 +356,7 @@ class MonkeyWrench:
             print("Did not compute or dump detailed report.")
 
     def index_all_cameras(
-        self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = False, n_jobs: int = 1
+        self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True, parallel: bool = True
     ):
         """Create an index of the images in the given log.
 
@@ -353,32 +371,32 @@ class MonkeyWrench:
                                 the respective camera roots (highly recommended).
             check:      If True, will check the integrity of the log in great detail, including image properties and
                         shapes, and write a detailed report to the output index
-            n_jobs:     Number of jobs to run in parallel. The maximum is one per camera, so 7. Set to 1 for sequential,
-                        and to 0 to auto-set.
+            parallel:   Whether to process each camera in parallel.
         """
-        if n_jobs == 0:
+        if parallel:
             n_jobs = len(CamName)
-
-        if n_jobs == 1:
-            for cam in CamName:
-                self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
-        else:
+            print(f"Using exactly {n_jobs} jobs")
             with mp.Pool(processes=n_jobs) as pool:
                 pool.starmap(
                     self.index_camera,
                     [(log_id, cam_name, out_index_fpath, check, index) for index, cam_name in enumerate(CamName)],
                 )
+        else:
+            for cam in CamName:
+                self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
 
     def index_camera(
         self,
         log_id: str,
-        cam_name: CamName,
+        cam_name: Union[CamName, str],
         out_index_fpath: Optional[str] = None,
         check: bool = False,
         pb_position: int = 0,
     ):
         """Please see `index_all_cameras` for info."""
         in_fs = fsspec.filesystem(urlparse(self._root).scheme)
+        if isinstance(cam_name, str):
+            cam_name = CamName(cam_name)
 
         self._logger.info("Setting up log reader to process camera %s", cam_name.value)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
@@ -422,6 +440,8 @@ class MonkeyWrench:
         progress_bar = tqdm(
             sorted(in_fs.glob(os.path.join(cam_dir, "*", "*.webp"))),
             mininterval=TQDM_MIN_INTERVAL_S,
+            # Supposed to let each process have its own progress bar, but it doesn't work since the progress bars don't
+            # start at the same time. Rip.
             position=pb_position,
             desc=f"{cam_name.value:<18}",
         )
@@ -481,7 +501,15 @@ class MonkeyWrench:
                         n_errors_so_far += 1
                         continue
                     else:
-                        status.append((img_fpath, timestamp_s, "OK", ""))
+                        # Might indicate bad cases of over/underexposure. Likely won't trigger if the sensor is covered
+                        # by snow (mean is larger than 5-10), which is fine since it's valid data.
+                        img_mean = img_np.mean()
+                        if img_mean < 5:
+                            status.append((img_fpath, timestamp_s, CAM_MEAN_TOO_LOW, str(img_mean)))
+                        elif img_mean > 250:
+                            status.append((img_fpath, timestamp_s, CAM_MEAN_TOO_HIGH, str(img_mean)))
+                        else:
+                            status.append((img_fpath, timestamp_s, "OK", ""))
                 except Exception as err:
                     # err_msg = f"ERROR: General error reading image {str(e)}"
                     status.append((img_fpath, timestamp_s, CAM_UNEXPECTED_CORRUPTION, str(err)))
@@ -613,7 +641,7 @@ class MonkeyWrench:
             # are not sorted by time or anything.
             with out_fs.open(report_fpath, "w") as csvfile:
                 writer = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
-                writer.writerow(["img_fpath_in_cam", "timestamp", "status"])
+                writer.writerow(["img_fpath_in_cam", "timestamp", "status", "details"])
                 for path, timestamp, message, details in status:
                     writer.writerow([path, timestamp, message, details])
 
@@ -641,6 +669,8 @@ class MonkeyWrench:
         Args:
             logs:       Either a file path to a text file with a list of log IDs to validate, or a comma-separated list
                         of log IDs to validate.
+            check_receipt:  If True, will check if the log has already been validated and skip it if so.
+            write_receipt:  If validation runs and produces no errors, write a receipt.
         """
         if os.path.isfile(logs):
             log_list = []
@@ -688,10 +718,10 @@ class MonkeyWrench:
         all_cam_ok = True
         for cam in CamName:
             cam_ok, message = self.validate_camera_report(
-                log_id, cam, check_receipt=check_receipt, write_receipt=write_receipt
+                log_id, cam.value, check_receipt=check_receipt, write_receipt=write_receipt
             )
             if not cam_ok:
-                camera_summary += f"\t{cam}: {message}\n"
+                camera_summary += f"\t{cam.value}: {message}\n"
                 all_cam_ok = False
         lidar_ok, lidar_status = self.validate_lidar_report(
             log_id, check_receipt=check_receipt, write_receipt=write_receipt
@@ -760,18 +790,23 @@ class MonkeyWrench:
         except (RuntimeError, ValueError) as err:
             errors.append(("log_metadata", "invalid" + str(err)))
 
-        try:
-            # These are perception outputs but not reliable, don't assume them to be very good, I have no idea what
-            # model was used when we dumped this data. It was very likely not a good production one! :(
-            with fs.open(os.path.join(log_root_uri, "detections.npz.lz4"), "rb") as raw_f:
-                with lz4.frame.open(raw_f, "rb") as f:
-                    # Failure to specify the encoding causes an unpicling error.
-                    dets = np.load(f, allow_pickle=True, encoding="latin1")["data"]
-                    # print(dets.files)
-                    assert dets is not None
-            print(len(dets), "dets")
-        except (RuntimeError, ValueError) as err:
-            errors.append(("detections", "invalid" + str(err)))
+        detections_uri = os.path.join(log_root_uri, "detections.npz.lz4")
+        if fs.isfile(detections_uri):
+            try:
+                # These are perception outputs but not reliable, don't assume them to be very good, I have no idea what
+                # model was used when we dumped this data. It was very likely not a good production one! :(
+                with fs.open(detections_uri, "rb") as raw_f:
+                    with lz4.frame.open(raw_f, "rb") as f:
+                        # Failure to specify the encoding causes an unpickling error.
+                        dets = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                        # print(dets.files)
+                        assert dets is not None
+                print(len(dets), "dets")
+            except (RuntimeError, ValueError) as err:
+                errors.append(("detections", "invalid" + str(err)))
+
+        else:
+            errors.append(("detections", "missing"))
 
         try:
             with fs.open(os.path.join(log_root_uri, "auto_state.npz.lz4"), "rb") as raw_f:
@@ -887,9 +922,90 @@ class MonkeyWrench:
         report_loc = os.path.join(out_index_fpath, "report.csv")
         canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
 
+        fs = fsspec.filesystem(urlparse(self._root).scheme)
+        if check_receipt and fs.isfile(canary_loc):
+            print("Skipping validation of", cam_dir, "since it has a receipt.")
+            return (True, "canary_found")
+
+        if not os.path.isfile(report_loc):
+            return (False, "no_report")
+
         ok = 0
         errors = []
         warnings = []
+        unmatched_frames = []
+
+        with open(report_loc, "r") as csvfile:
+            reader = csv.reader(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
+            header = next(reader)
+            if len(header) != 4:
+                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+            else:
+                for sample_uri, timestamp, status, detail in reader:
+                    if status == "OK":
+                        ok += 1
+                        continue
+                    elif status == CAM_UNMATCHED_POSE:
+                        delta_s = float(detail)
+                        unmatched_frames.append((float(timestamp), delta_s, sample_uri))
+                        warnings.append("unmatched frame at " + str(timestamp) + "s, delta_s=" + str(delta_s))
+                    else:
+                        # print(f"Problem with {sample_uri}: {status}")
+                        errors.append((sample_uri, timestamp, status, detail))
+
+        if len(unmatched_frames):
+            max_delta = -1
+            clusters = []
+            cur_start = -1
+            cur_start_idx = -1
+            prev_ts = -1
+            for idx, (ts, delta_s, sample_uri) in enumerate(unmatched_frames):
+                # print(f"{ts:.3f}", sample_uri.split("/")[-1], delta_s)
+
+                if cur_start == -1 or ts - prev_ts > 1.0:
+                    # Add the previous cluster, if it exists
+                    if cur_start != -1:
+                        clusters.append((cur_start_idx, idx - 1))
+
+                    # Start new cluster
+                    cur_start = ts
+                    cur_start_idx = idx
+                else:
+                    # Extend current cluster
+                    pass
+
+                if delta_s > max_delta:
+                    max_delta = delta_s
+
+                prev_ts = ts
+
+            print("Max delta was ", max_delta, "sec")
+            if cur_start != -1:
+                clusters.append((cur_start_idx, idx))
+
+            print(f"Found {len(clusters)} clusters of unmatched frames")
+            # for c_start_idx, c_end_idx in clusters:
+            #     print(
+            #         f"Cluster from {unmatched_frames[c_start_idx][0]:.3f} to {unmatched_frames[c_end_idx][0]:.3f}"
+            #     )
+
+            if len(clusters) >= 5:
+                errors.append(("", -1, INVALID_REPORT, f"Too many clusters of unmatched frames: {len(clusters)}"))
+
+            unmatched_ratio = len(unmatched_frames) / ok
+            if ok > 100 and unmatched_ratio > 0.2:
+                errors.append(("", -1, INVALID_REPORT, f"Too many unmatched frames compared to OK frames: " \
+                    f"{ok=} but {len(unmatched_frames)} unmatched ones"))
+
+
+        if len(errors) > 0:
+            print(f"Found {len(errors)} errors in {log_id} camera data....")
+            for err in errors[:10]:
+                print("\t", err)
+            if len(errors) > 10:
+                print("...")
+
+            return (False, f"{len(errors)} errors found")
 
         # Validation for unexpectedly short logs
         #
@@ -902,6 +1018,8 @@ class MonkeyWrench:
         if len(warnings) > 0:
             print(f"Found {len(warnings)} warnings in {log_id}, camera {cam_name}.")
             print_list_with_limit(warnings, 15)
+
+        return (True, "checked")
 
     def validate_lidar_report(
         self,
