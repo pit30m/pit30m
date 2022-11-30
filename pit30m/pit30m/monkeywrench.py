@@ -4,6 +4,7 @@ import csv
 import geojson
 import json
 from pickle import UnpicklingError
+from dataclasses import dataclass
 import multiprocessing as mp
 import logging
 from datetime import datetime
@@ -39,6 +40,14 @@ ETL_CANARY_FNAME = ".pit30m_done"
 MIN_LIDAR_FRAMES = 10 * 60 * 3
 
 TQDM_MIN_INTERVAL_S = 3
+
+KNOWN_INCOMPLETE_CAMERAS = [
+    # Confirmed 2022-11-24 - only has hdcam_12_middle_front_narrow_left
+    "c9e9e7a7-f1cb-4af8-c5c9-3a610cbcc20e",
+    # Confirmed 2022-11-24 - only has hdcam_02_starboard_front_roof_wide
+    "dc3d9c11-5ec7-41cd-d4e0-ec795cdae27d",
+]
+
 
 class MonkeyWrench:
 
@@ -95,6 +104,9 @@ class MonkeyWrench:
 
     def get_lidar_dir(self, log_root: str, lidar_name: str) -> str:
         return os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
+
+    def get_cam_dir(self, log_root: str, cam_name: str) -> str:
+        return os.path.join(log_root, "cameras", cam_name.lstrip("/"))
 
     def index_lidar(
         self,
@@ -370,6 +382,12 @@ class MonkeyWrench:
         )
         for entry in progress_bar:
             img_fpath = entry
+            # XXX(andrei): Similarly, in a sibling method, look for large discrepancies between the number of samples
+            # in different sensors. E.g., if one camera has 100 images and the other has 1000, that's a problem we would
+            # like to look into.
+
+            # XXX(andrei): Log a status error if meta is missing. May want to also quickly loop through metas and error
+            # if no image for a specific meta.
             meta_fpath = entry.replace(".day", ".meta").replace(".night", ".meta").replace(".webp", ".npy")
             # Keep track of the log ID in the index, so we can merge indexes easily.
             img_fpath_in_root = "/".join(img_fpath.split("/")[-5:])
@@ -578,92 +596,26 @@ class MonkeyWrench:
         if not os.path.isdir(log_root):
             return (False, f"Log root directory for {log_id} does not exist under {self._root}.")
 
-        camera_summary = ""
-        lidar_ok, lidar_status = self.validate_lidar_report(log_id, check_receipt=check_receipt, write_receipt=write_receipt)
-        camera_ok = True # TODO hook up
-        other_summary = ""
-
         # TODO(andrei): Validate camera, lidar, and other report. If things are OK, write receipt but trace back to the
         # reports used.
 
-        if lidar_ok and camera_ok:
+        camera_summary = ""
+        all_cam_ok = True
+        for cam in CamName:
+            cam_ok, message = self.validate_camera_report(log_id, cam, check_receipt=check_receipt, write_receipt=write_receipt)
+            if not cam_ok:
+                camera_summary += f"\t{cam}: {message}\n"
+                all_cam_ok = False
+        lidar_ok, lidar_status = self.validate_lidar_report(log_id, check_receipt=check_receipt, write_receipt=write_receipt)
+
+        other_summary = ""
+
+
+        if lidar_ok and all_cam_ok:
             return (True, "")
         else:
             return (False, lidar_status + camera_summary + other_summary)
 
-
-    def validate_lidar_report(
-        self,
-        log_id: str,
-        lidar_name: str = "hdl64e_12_middle_front_roof",
-        acceptable_wgs84_delay_s: float = 0.25,
-        check_receipt: bool = True,
-        write_receipt: bool = True,
-    ):
-        log_root = os.path.join(self._root, log_id.lstrip("/"))
-        lidar_dir = self.get_lidar_dir(log_root, lidar_name)
-        out_index_fpath = os.path.join(lidar_dir, "index")
-        report_loc = os.path.join(out_index_fpath, "report.csv")
-        canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
-
-        ok = 0
-        errors = []
-        warnings = []
-
-        fs = fsspec.filesystem(urlparse(self._root).scheme)
-        if check_receipt and fs.isfile(canary_loc):
-            print("Skipping validation of", lidar_dir, "since it has a receipt.")
-            return (True, "canary_found")
-
-        if not os.path.isfile(report_loc):
-            return (False, "no_report")
-
-        with open(report_loc, "r") as csvfile:
-            reader = csv.reader(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            header = next(reader)
-            if len(header) != 4:
-                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
-            else:
-                for sample_uri, timestamp, status, detail in reader:
-                    if status == "OK":
-                        ok += 1
-                        continue
-                    elif status == "bad-raw-WGS84-offset":
-                        offset_s = float(detail.rstrip("s"))
-                        if offset_s > acceptable_wgs84_delay_s:
-                            # Be a little lenient
-                            warnings.append( (sample_uri, timestamp, status, detail) )
-                    else:
-                        # print(f"Problem with {sample_uri}: {status}")
-                        errors.append( (sample_uri, timestamp, status, detail) )
-
-        if len(errors) > 0:
-            print(f"Found {len(errors)} errors in {log_id}.")
-            for err in errors[:10]:
-                print("\t", err)
-            if len(errors) > 10:
-                print("...")
-
-            return (False, f"{len(errors)} errors found")
-
-        # Validation for unexpectedly short logs
-        #
-        if ok < MIN_LIDAR_FRAMES:
-            print(len(errors))
-            print(ok)
-            print(len(warnings))
-            return (False, f"not_enough_lidar_frames_{ok}")
-
-        if len(warnings) > 0:
-            print(f"Found {len(warnings)} warnings in {log_id}.")
-            to_show = 15
-            for i in range(len(warnings[:to_show])):
-                print(f"\t - {warnings[i]}")
-            if len(warnings) > to_show:
-                print(f"\t - ... and {len(warnings) - to_show} more.")
-
-        print("OK samples: ", ok)
-        return (True, "checked")
 
     def diagnose_misc(self, log_id: str, out_index_fpath: str, check: bool) -> List[Tuple[str, str]]:
         """Diagnoses non-sensor data, like poses, GPS, metadata, etc. Returns a list of errors, empty if all is well."""
@@ -794,27 +746,40 @@ class MonkeyWrench:
         except RuntimeError as err:
             errors.append(("raw_utm", "invalid" + str(err)))
 
-        try:
-            with fs.open(os.path.join(log_root_uri, "traffic_lights.npz.lz4"), "rb") as raw_f:
-                with lz4.frame.open(raw_f, "rb") as f:
-                    tl = np.load(f, allow_pickle=True, encoding="latin1")["data"]
-                    assert tl is not None
-                    print(tl.dtype)
-                    print(len(tl))
-        except RuntimeError as err:
-            errors.append(("raw_utm", "invalid" + str(err)))
+        # As far as I remember, traffic light states are 100% the outputs of some camera-based model, and NOT human
+        # labeled.
+        tl_url = os.path.join(log_root_uri, "traffic_lights.npz.lz4")
+        if fs.isfile(tl_url):
+            try:
+                with fs.open(tl_url, "rb") as raw_f:
+                    with lz4.frame.open(raw_f, "rb") as f:
+                        tl = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                        assert tl is not None
+                        print(tl.dtype)
+                        print(len(tl))
+            except RuntimeError as err:
+                errors.append(("traffic_lights", "invalid" + str(err)))
+        else:
+            errors.append(("traffic_lights", "missing"))
 
-        try:
-            with fs.open(os.path.join(log_root_uri, "vehicle_state.npz.lz4"), "rb") as raw_f:
-                with lz4.frame.open(raw_f, "rb") as f:
-                    vs = np.load(f, allow_pickle=True, encoding="latin1")["data"]
-                    assert vs is not None
-                    print(vs.dtype)
-                    print(len(vs))
-        except RuntimeError as err:
-            errors.append(("raw_utm", "invalid" + str(err)))
+        vs_url = os.path.join(log_root_uri, "vehicle_state.npz.lz4")
+        if fs.isfile(vs_url):
+            try:
 
-        # TODO(andrei): Write this as a report entry!
+                with fs.open(vs_url, "rb") as raw_f:
+                    with lz4.frame.open(raw_f, "rb") as f:
+                        vs = np.load(f, allow_pickle=True, encoding="latin1")["data"]
+                        assert vs is not None
+                        # print(vs.dtype)
+                        # print(len(vs))
+            except RuntimeError as err:
+                errors.append(("vehicle_state", "invalid" + str(err)))
+        else:
+                errors.append(("vehicle_state", "missing"))
+
+        # XXX(andrei): Write this as a report entry! Discriminate between WARNING and ERROR. The difference is about
+        # which files are missing. E.g., tl states missing is a warning, but core metadata, poses, or calibratation
+        # missing is an error.
         if check and len(errors) > 0:
             print(f"{len(errors)} errors found in {log_id}!")
             for err in errors:
@@ -822,69 +787,120 @@ class MonkeyWrench:
 
         return errors
 
-    def _diagnose_lidar(self, dataset_base: str, log_uri: str) -> None:
-        # Old code for loading a lot of LiDAR into the same coordinate frame for Open3D visualization.
-        ld = dataset_base + log_uri + "/lidars/"
-        dbp = urlparse(dataset_base)
-        fs = fsspec.filesystem(dbp.scheme)
 
-        # TODO(andrei): Diagnose and check shape!
+    def validate_camera_report(
+        self,
+        log_id: str,
+        cam_name: str,
+        check_receipt: bool,
+        write_receipt: bool,
+    ):
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        cam_dir = self.get_cam_dir(log_root, cam_name)
 
-        with mp.Pool(processes=mp.cpu_count() - 1) as pool:
-            for lid_dir in fs.ls(ld):
-                all_pcd = []
-                all_int = []
-                n_chunks = 20000
-                # Sample every 'sample_rate' sweeps.
-                sample_rate = 5
-                lidar_chunks = sorted(fs.ls(lid_dir))
-                print(f"{len(lidar_chunks)} subdirectories of LiDAR found")
-                lidar_files = []
-                for chunk in tqdm(lidar_chunks[:n_chunks]):
-                    if fs.isdir(chunk):
-                        lidar_files += sorted(fs.ls(chunk)[::sample_rate])
+        out_index_fpath = os.path.join(cam_dir, "index")
+        report_loc = os.path.join(out_index_fpath, "report.csv")
+        canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
 
-                print(f"Will load {len(lidar_files)} LiDAR pcds.")
-                all_pcd, all_int = unzip(pool.map(_load_lidar, lidar_files))
-                print(all_pcd[0].shape)
-                print(all_pcd[0].dtype)
-                # for sub_sample in tqdm(
-                #     with lzma.open(sub_sample) as lzma_file:
-                #         lidar = np.load(lzma_file)
-                #         # Points are in the continuous frame I think
-                #         all_pcd.append(np.array(lidar["points"]))
-                #         all_int.append(np.array(lidar["intensity"]))
-                #         # other keys: laser_theta, seconds, raw_power, intensity, points, points_H_sensor, laser_id
+        ok = 0
+        errors = []
+        warnings = []
 
-                print("Loaded points, processing...")
-                all_pcd = np.concatenate(all_pcd, axis=0)
-                all_int = np.concatenate(all_int, axis=0)
-                # TODO(andrei): This likely makes a copy (based on how slow it is), so we may want to use the tensor
-                # API?
-                vec = o3d.utility.Vector3dVector(all_pcd)
-                col = o3d.utility.Vector3dVector(np.tile(all_int[:, None] / 255.0, (1, 3)))
-                pcd = o3d.geometry.PointCloud(vec)
-                pcd.colors = col
-                print("Before filtering:", pcd)
-                pcd = pcd.voxel_down_sample(voxel_size=0.05)
-                print("After filtering:", pcd)
-                o3d.visualization.draw_geometries([pcd])
+        # Validation for unexpectedly short logs
+        #
+        if ok < MIN_LIDAR_FRAMES:
+            print(len(errors))
+            print(ok, "frames found")
+            print(len(warnings))
+            return (False, f"not_enough_cam_frames_{ok}")
+
+        if len(warnings) > 0:
+            print(f"Found {len(warnings)} warnings in {log_id}, camera {cam_name}.")
+            print_list_with_limit(warnings, 15)
+
+    def validate_lidar_report(
+        self,
+        log_id: str,
+        lidar_name: str = "hdl64e_12_middle_front_roof",
+        acceptable_wgs84_delay_s: float = 0.25,
+        check_receipt: bool = True,
+        write_receipt: bool = True,
+    ):
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        lidar_dir = self.get_lidar_dir(log_root, lidar_name)
+        out_index_fpath = os.path.join(lidar_dir, "index")
+        report_loc = os.path.join(out_index_fpath, "report.csv")
+        canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
+
+        ok = 0
+        errors = []
+        warnings = []
+
+        fs = fsspec.filesystem(urlparse(self._root).scheme)
+        if check_receipt and fs.isfile(canary_loc):
+            print("Skipping validation of", lidar_dir, "since it has a receipt.")
+            return (True, "canary_found")
+
+        if not os.path.isfile(report_loc):
+            return (False, "no_report")
+
+        with open(report_loc, "r") as csvfile:
+            reader = csv.reader(csvfile, quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            header = next(reader)
+            if len(header) != 4:
+                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+            else:
+                for sample_uri, timestamp, status, detail in reader:
+                    if status == "OK":
+                        ok += 1
+                        continue
+                    elif status == "bad-raw-WGS84-offset":
+                        offset_s = float(detail.rstrip("s"))
+                        if offset_s > acceptable_wgs84_delay_s:
+                            # Be a little lenient
+                            warnings.append( (sample_uri, timestamp, status, detail) )
+                    else:
+                        # print(f"Problem with {sample_uri}: {status}")
+                        errors.append( (sample_uri, timestamp, status, detail) )
+
+        if len(errors) > 0:
+            print(f"Found {len(errors)} errors in {log_id}.")
+            for err in errors[:10]:
+                print("\t", err)
+            if len(errors) > 10:
+                print("...")
+
+            return (False, f"{len(errors)} errors found")
+
+        # Validation for unexpectedly short logs
+        #
+        if ok < MIN_LIDAR_FRAMES:
+            print(len(errors))
+            print(ok)
+            print(len(warnings))
+            return (False, f"not_enough_lidar_frames_{ok}")
+
+        if len(warnings) > 0:
+            print(f"Found {len(warnings)} warnings in {log_id}.")
+            to_show = 15
+            for i in range(len(warnings[:to_show])):
+                print(f"\t - {warnings[i]}")
+            if len(warnings) > to_show:
+                print(f"\t - ... and {len(warnings) - to_show} more.")
+
+        print("OK samples: ", ok)
+        return (True, "checked")
+
+def print_list_with_limit(lst, limit: int) -> None:
+    for entry in lst[:limit]:
+        print(f"\t - {entry}")
+    if len(lst) > limit:
+        print(f"\t - ... and {len(lst) - limit} more.")
 
 
-def _load_lidar(lidar_uri: str) -> Tuple[np.ndarray, np.ndarray]:
-    """Loads a single LiDAR sweep from a URI, reading a LZMA-compressed file."""
-    fs = fsspec.filesystem(urlparse(lidar_uri).scheme)
-    with fs.open(lidar_uri) as f:
-        try:
-            with lzma.open(f) as lzma_file:
-                lidar = np.load(lzma_file)
-                return np.array(lidar["points"]), np.array(lidar["intensity"])
-        except LZMAError:
-            print("LZMA error reading LiDAR uri: ", lidar_uri)
-            raise
 
-
-
+# Trick to bypass !binary parts of YAML files before we can support them. (They are low priority and not
+# very important anyway.)
 class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
     def ignore_unknown(self, node):
         return None

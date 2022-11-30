@@ -270,7 +270,6 @@ class LogReader:
             with fsspec.open(lidar_fpath, "rb") as compressed_f:
                 with lz4.frame.open(compressed_f, "rb") as f:
                     npf = np.load(f)
-                    # print(npf.files)
                     yield LiDARFrame(
                         # TODO add remaining fields like raw power, etc.
                         xyz_continuous=npf["points"],
