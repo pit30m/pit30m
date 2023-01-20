@@ -6,7 +6,9 @@ from pickle import UnpicklingError
 from dataclasses import dataclass
 import multiprocessing as mp
 import logging
+from functools import cached_property
 from datetime import datetime
+from enum import Enum
 import numpy as np
 import lz4
 import fire
@@ -25,6 +27,7 @@ from joblib import Parallel, delayed
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
+CAM_META_MISSING = "cam_meta_missing"
 CAM_META_UNPICKLING_ERROR = "cam_meta_unpickling_error"
 CAM_UNEXPECTED_SHAPE = "cam_unexpected_shape"
 CAM_UNEXPECTED_CORRUPTION = "cam_unexpected_corruption"
@@ -37,6 +40,8 @@ INVALID_REPORT = "invalid_report"
 
 VALIDATION_CANARY_FNAME = ".pit30m_valid_v0"
 ETL_CANARY_FNAME = ".pit30m_done"
+PIT30M_IMAGE_CANARY_DONE = ".pit30m_image_done"
+PIT30M_NONIMAGE_CANARY_DONE = ".pit30m_nonimage_done"
 
 MIN_LIDAR_FRAMES = 10 * 60 * 3
 
@@ -66,11 +71,56 @@ class CamReportSummary:
 
 
 
+class LogStatus(Enum):
+    NOT_ATTEMPTED = "not_attempted"
+    DONE_NOT_INDEXED = "done_not_indexed"
+    CRASHED_OR_IN_PROGRESS = "crashed_or_in_progress"
+    VALIDATED = "validated"
+
+    NEEDS_FINAL_RECEIPT = "needs_final_receipt"
+    ONLY_GPU_DONE = "only_gpu_done"
+    ONLY_CPU_DONE = "only_cpu_done"
+
+
+def query_log_status(root, log_id) -> LogStatus:
+    out_fs = fsspec.filesystem(urlparse(root).scheme)
+    out_log_root = os.path.join(root, log_id.lstrip("/"))
+    if not out_fs.exists(out_log_root):
+        return LogStatus.NOT_ATTEMPTED
+    elif out_fs.exists(os.path.join(out_log_root, VALIDATION_CANARY_FNAME)):
+        # Log validated successfully. We gucci.
+        return LogStatus.VALIDATED
+    elif out_fs.exists(os.path.join(out_log_root, ETL_CANARY_FNAME)):
+        # Log was dumped but not yet indexed
+        return LogStatus.DONE_NOT_INDEXED
+    else:
+        img_ok = False
+        non_img_ok = False
+        if out_fs.exists(os.path.join(out_log_root, PIT30M_IMAGE_CANARY_DONE)):
+            img_ok = True
+        if out_fs.exists(os.path.join(out_log_root, PIT30M_NONIMAGE_CANARY_DONE)):
+            non_img_ok = True
+
+        if img_ok and non_img_ok:
+            # We dumped both big parts of the log, but not the final receipt
+            return LogStatus.NEEDS_FINAL_RECEIPT
+
+        if img_ok:
+            return LogStatus.ONLY_GPU_DONE
+        elif non_img_ok:
+            return LogStatus.ONLY_CPU_DONE
+        else:
+            # File exists but the dump did not finish (yet?)
+            return LogStatus.CRASHED_OR_IN_PROGRESS
+
+
 class MonkeyWrench:
     def __init__(
         self,
-        dataset_root: str = "s3://the/bucket",
+        dataset_root: str = "s3://pit30m/",
         metadata_root: str = "file:///mnt/data/pit30m/",
+        log_status_fpath: str = "log_status.csv",
+        log_list_fpath: str = "all_logs.txt",
     ) -> None:
         """Dataset administration tool for the Pit30M dataset (geo-indexing, data integrity checks, etc.)
 
@@ -81,11 +131,20 @@ class MonkeyWrench:
         """
         self._root = dataset_root
         self._metadata_root = metadata_root
+        self._log_status_fpath = log_status_fpath
+        self._log_list_fpath = log_list_fpath
+
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.INFO)
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         self._logger.addHandler(handler)
+
+    @cached_property
+    def all_logs(self) -> List[str]:
+        """Return a list of all log IDs."""
+        with open(self._log_list_fpath, "r") as f:
+            return [line.strip() for line in f]
 
     def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True):
         """Create index files for the raw data in the dataset.
@@ -124,6 +183,57 @@ class MonkeyWrench:
 
     def get_cam_dir(self, log_root: str, cam_name: str) -> str:
         return os.path.join(log_root, "cameras", cam_name.lstrip("/"))
+
+    def next_to_validate(self, max: int = 10):
+        """Next logs to validate."""
+        pass
+
+    def next_to_etl(self, max: int = 10, include_attempted_but_incomplete: bool = False, kind: str = "gpu",
+            batch_size: int = 24, n_read_workers: int = 12, webp_out_quality: int = 85):
+        all_logs = self.all_logs
+        # out_fs = fsspec.filesystem(urlparse(self._root).scheme)
+
+        not_attempted = []
+        crashed_or_in_progress = []
+
+        need_gpu_job = []
+        need_cpu_job = []
+        need_only_receipt = []
+        effective_list = []
+
+        for log_id in all_logs:
+            status = query_log_status(self._root, log_id)
+            if status == LogStatus.NOT_ATTEMPTED:
+                # not_attempted.append(log_id)
+                need_gpu_job.append(log_id)
+            elif status == LogStatus.ONLY_CPU_DONE:
+                need_gpu_job.append(log_id)
+            elif status == LogStatus.ONLY_GPU_DONE:
+                need_cpu_job.append(log_id)
+            elif status == LogStatus.NEEDS_FINAL_RECEIPT:
+                need_only_receipt.append(log_id)
+            elif status == LogStatus.CRASHED_OR_IN_PROGRESS and include_attempted_but_incomplete:
+                crashed_or_in_progress.append(log_id)
+
+            effective_list = need_gpu_job if kind == "gpu" else need_cpu_job
+            if include_attempted_but_incomplete:
+                effective_list += crashed_or_in_progress
+
+            if max > 0 and len(effective_list) >= max:
+                break
+
+        # print("Not attempted:")
+        # if include_attempted_but_incomplete:
+        #     print("(or attempted but incomplete logs)")
+        for log_id in effective_list:
+            if kind == "gpu":
+                print(f"python process.py etl_images {log_id} --anonymizer yolo --anonymizer-weights "
+                    f"/app/weights/anon-yolo5m-exp21-best.fp16.bs{batch_size}.1280.engine --image-batch-size {batch_size} "
+                    f"--meta-batch-size {batch_size * 4} --out-root s3://pit30m/ --n-read-workers {n_read_workers} "
+                    f"--webp-out-quality {webp_out_quality}")
+            elif kind == "cpu":
+                print(f"python process.py etl_non_images {log_id} --out-root s3://pit30m/ " \
+                    f"--n-read-workers {int(n_read_workers)}")
 
     def index_lidar(
         self,
@@ -458,6 +568,11 @@ class MonkeyWrench:
             img_fpath_in_root = "/".join(img_fpath.split("/")[-5:])
             progress_bar.set_postfix(n_errors_so_far=n_errors_so_far)
 
+            if not in_fs.exists(meta_fpath):
+                status.append((meta_fpath, timestamp_s, CAM_META_MISSING, f"Base entry uri: {entry}"))
+                n_errors_so_far += 1
+                continue
+
             timestamp_s = -1.0
             with in_fs.open(meta_fpath) as meta_f:
                 try:
@@ -707,8 +822,9 @@ class MonkeyWrench:
 
     def validate_log_report(self, log_id: str, check_receipt: bool = True, write_receipt: bool = True):
         log_root = os.path.join(self._root, log_id.lstrip("/"))
+        out_fs = fsspec.filesystem(urlparse(log_root).scheme)
 
-        if not os.path.isdir(log_root):
+        if not out_fs.isdir(log_root):
             return (False, f"Log root directory for {log_id} does not exist under {self._root}.")
 
         # TODO(andrei): Validate camera, lidar, and other report. If things are OK, write receipt but trace back to the
@@ -730,6 +846,11 @@ class MonkeyWrench:
         other_summary = ""
 
         if lidar_ok and all_cam_ok:
+            if write_receipt:
+                receipt_fpath = os.path.join(log_root, VALIDATION_CANARY_FNAME)
+                with out_fs.open(receipt_fpath, "w") as f:
+                    f.write("OK, 'other' not checked")
+
             return (True, "")
         else:
             return (False, lidar_status + camera_summary + other_summary)
@@ -899,7 +1020,7 @@ class MonkeyWrench:
             errors.append(("vehicle_state", "missing"))
 
         # XXX(andrei): Write this as a report entry! Discriminate between WARNING and ERROR. The difference is about
-        # which files are missing. E.g., tl states missing is a warning, but core metadata, poses, or calibratation
+        # which files are missing. E.g., tl states missing is a warning, but core metadata, poses, or calibration
         # missing is an error.
         if check and len(errors) > 0:
             print(f"{len(errors)} errors found in {log_id}!")
@@ -989,7 +1110,7 @@ class MonkeyWrench:
             #         f"Cluster from {unmatched_frames[c_start_idx][0]:.3f} to {unmatched_frames[c_end_idx][0]:.3f}"
             #     )
 
-            if len(clusters) >= 5:
+            if len(clusters) > 10:
                 errors.append(("", -1, INVALID_REPORT, f"Too many clusters of unmatched frames: {len(clusters)}"))
 
             unmatched_ratio = len(unmatched_frames) / ok
@@ -1093,6 +1214,20 @@ class MonkeyWrench:
 
         print("OK samples: ", ok)
         return (True, "checked")
+
+    def feh(self, log_id: str, cam_name: str = "hdcam_12_middle_front_roof_wide", frame: int = 0):
+        pit30m_fs = fsspec.filesystem(urlparse(self._root).scheme)
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        cam_root = self.get_cam_dir(log_root, cam_name)
+        top = pit30m_fs.ls(cam_root)
+        for entry in top:
+            sub = pit30m_fs.ls(entry)
+            for subentry in sub:
+                if subentry.endswith(".webp"):
+                    print(subentry)
+                    break
+
+
 
 
 def print_list_with_limit(lst, limit: int) -> None:
