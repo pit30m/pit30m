@@ -14,7 +14,7 @@ from pit30m.data.log_reader import LogReader
 from pit30m.camera import CamName
 
 # TODO(andrei): Configure shard-aware shuffling.
-# TODO(andrei): This should be right but update as needed if we end up getting the Open Data bucket somewhere else.
+
 PIT30M_AWS_REGION = "us-east-1"
 
 
@@ -24,12 +24,24 @@ def logwise_s3_cam_lister(root: str, logs: Sequence[str], cameras: Optional[Sequ
     if cameras is None:
         cameras = [CamName.MIDDLE_FRONT_WIDE]
 
+    bases = [
+        os.path.join(root, log, "cameras", cam.value)
+        for log in logs
+        for cam in cameras
+    ]
+    print(bases)
+
+    import fsspec
+    fs = fsspec.filesystem("s3")
+    print(fs.ls(root))
+    # raise ValueError("OK")
+
+    import ipdb
+    ipdb.set_trace()
+
+    # NOTE(andrei): This will be VERY slow without caching: That is why we need indexing.
     return dp.iter.S3FileLister(
-        dp.iter.IterableWrapper([
-            os.path.join(root, log, "cameras", cam.value)
-            for log in logs
-            for cam in cameras
-        ]),
+        dp.iter.IterableWrapper(bases),
         region=region
     )
 
@@ -39,16 +51,18 @@ def by_webp(uri):
 def img_as_np(file_and_path):
     return np.array(Image.open(file_and_path[0]))
 
-def demo_datapipe(root_uri, logs):
+def build_demo_datapipe(root_uri: str, logs: Union[str, Sequence[str]]):
     if isinstance(logs, str):
         logs = [entry.strip() for entry in logs.split(",")]
 
     # TODO(andrei): Rewrite in functional form (recommended).
     if root_uri.startswith("s3"):
-        # TODO(andrei): Test this once we have the final S3 bucket.
         uri_pipe = logwise_s3_cam_lister(root_uri, logs)
+        return uri_pipe
         img_uri_pipe = uri_pipe.filter(lambda uri: uri.endswith(".webp"))
         s3_data_pipe = dp.iter.S3FileLoader(img_uri_pipe, region=PIT30M_AWS_REGION)
+        img_data_pipe = s3_data_pipe.map(img_as_np)
+
     else:
         # hack
         cameras = [CamName.MIDDLE_FRONT_WIDE]
@@ -77,7 +91,7 @@ def demo_dataloader(root_uri: str = "s3://my/bucket", logs: Union[Sequence[str],
     print("root_uri", root_uri)
     print("logs:", logs)
 
-    datapipe = demo_datapipe(root_uri, logs)
+    datapipe = build_demo_datapipe(root_uri, logs)
     loader = DataLoader(
         dataset=datapipe, batch_size=batch_size, num_workers=num_workers, shuffle=True
     )

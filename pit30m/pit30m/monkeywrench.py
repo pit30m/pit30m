@@ -18,12 +18,14 @@ from PIL import Image
 import lzma
 from lzma import LZMAError
 from tqdm import tqdm
+from joblib import Parallel, delayed
 from typing import Optional, List, Tuple, Union
 from urllib.parse import urlparse, urljoin
+
 from pit30m.camera import CamName
 from pit30m.data.log_reader import LogReader
+from pit30m.data.submap import Map
 from pit30m.indexing import associate
-from joblib import Parallel, delayed
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
@@ -114,6 +116,22 @@ def query_log_status(root, log_id) -> LogStatus:
             return LogStatus.CRASHED_OR_IN_PROGRESS
 
 
+def qls_it(root, log_ids, batch_size, max):
+    pool = Parallel(n_jobs=-1)
+
+    for i in range(0, len(log_ids), batch_size):
+        res = pool(
+            delayed(query_log_status)(root, log_id)
+            for log_id in log_ids[i : i + batch_size]
+        )
+        # TODO(andrei): Invoke next batch while yielding current.
+        for element in res:
+            yield res
+
+        if i + batch_size > max:
+            break
+
+
 class MonkeyWrench:
     def __init__(
         self,
@@ -121,6 +139,7 @@ class MonkeyWrench:
         metadata_root: str = "file:///mnt/data/pit30m/",
         log_status_fpath: str = "log_status.csv",
         log_list_fpath: str = "all_logs.txt",
+        submap_utm_fpath: str = "submap_utm.pkl",
     ) -> None:
         """Dataset administration tool for the Pit30M dataset (geo-indexing, data integrity checks, etc.)
 
@@ -133,6 +152,7 @@ class MonkeyWrench:
         self._metadata_root = metadata_root
         self._log_status_fpath = log_status_fpath
         self._log_list_fpath = log_list_fpath
+        self._submap_utm_fpath = submap_utm_fpath
 
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.INFO)
@@ -145,6 +165,10 @@ class MonkeyWrench:
         """Return a list of all log IDs."""
         with open(self._log_list_fpath, "r") as f:
             return [line.strip() for line in f]
+
+    @cached_property
+    def map(self) -> Map:
+        return Map.from_submap_utm_uri(self._submap_utm_fpath)
 
     def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True):
         """Create index files for the raw data in the dataset.
@@ -189,10 +213,8 @@ class MonkeyWrench:
         pass
 
     def next_to_etl(self, max: int = 10, include_attempted_but_incomplete: bool = False, kind: str = "gpu",
-            batch_size: int = 24, n_read_workers: int = 12, webp_out_quality: int = 85):
+            batch_size: int = 32, n_read_workers: int = 12, webp_out_quality: int = 85):
         all_logs = self.all_logs
-        # out_fs = fsspec.filesystem(urlparse(self._root).scheme)
-
         not_attempted = []
         crashed_or_in_progress = []
 
@@ -218,6 +240,7 @@ class MonkeyWrench:
             effective_list = need_gpu_job if kind == "gpu" else need_cpu_job
             if include_attempted_but_incomplete:
                 effective_list += crashed_or_in_progress
+            # effective_list = crashed_or_in_progress
 
             if max > 0 and len(effective_list) >= max:
                 break
@@ -504,13 +527,14 @@ class MonkeyWrench:
         pb_position: int = 0,
     ):
         """Please see `index_all_cameras` for info."""
-        in_fs = fsspec.filesystem(urlparse(self._root).scheme)
+        scheme = urlparse(self._root).scheme
+        in_fs = fsspec.filesystem(scheme)
         if isinstance(cam_name, str):
             cam_name = CamName(cam_name)
 
         self._logger.info("Setting up log reader to process camera %s", cam_name.value)
         log_root = os.path.join(self._root, log_id.lstrip("/"))
-        log_reader = LogReader(log_root_uri=log_root)
+        log_reader = LogReader(log_root_uri=log_root, map=self.map)
         cam_dir = os.path.join(log_root, "cameras", cam_name.value.lstrip("/"))
 
         # Collects diagnostics for writing the health report, if check is True. The diagnostics will NOT be sorted and
@@ -547,6 +571,8 @@ class MonkeyWrench:
         self._logger.info("Starting to index camera data. [%s]", check_status)
         index = []
         n_errors_so_far = 0
+        debug_max_errors = 10
+
         progress_bar = tqdm(
             sorted(in_fs.glob(os.path.join(cam_dir, "*", "*.webp"))),
             mininterval=TQDM_MIN_INTERVAL_S,
@@ -567,6 +593,8 @@ class MonkeyWrench:
             # Keep track of the log ID in the index, so we can merge indexes easily.
             img_fpath_in_root = "/".join(img_fpath.split("/")[-5:])
             progress_bar.set_postfix(n_errors_so_far=n_errors_so_far)
+            if n_errors_so_far > debug_max_errors and debug_max_errors > 0:
+                break
 
             if not in_fs.exists(meta_fpath):
                 status.append((meta_fpath, timestamp_s, CAM_META_MISSING, f"Base entry uri: {entry}"))
@@ -607,27 +635,28 @@ class MonkeyWrench:
 
             if check:
                 try:
-                    img = Image.open(img_fpath)
-                    img.verify()
-                    # This will actually read the image data!
-                    img_np = np.asarray(img)
-                    if img_np.shape != EXPECTED_IMAGE_SIZE:
-                        status.append((img_fpath, timestamp_s, CAM_UNEXPECTED_SHAPE, str(img_np.shape)))
-                        n_errors_so_far += 1
-                        continue
-                    else:
-                        # Might indicate bad cases of over/underexposure. Likely won't trigger if the sensor is covered
-                        # by snow (mean is larger than 5-10), which is fine since it's valid data.
-                        img_mean = img_np.mean()
-                        if img_mean < 5:
-                            status.append((img_fpath, timestamp_s, CAM_MEAN_TOO_LOW, str(img_mean)))
-                        elif img_mean > 250:
-                            status.append((img_fpath, timestamp_s, CAM_MEAN_TOO_HIGH, str(img_mean)))
+                    img_full_fpath = f"{scheme}://" + img_fpath
+                    with in_fs.open(img_full_fpath, "rb") as img_f:
+                        img = Image.open(img_f)
+                        img.verify()
+                        # This will actually read the image data!
+                        img_np = np.asarray(img)
+                        if img_np.shape != EXPECTED_IMAGE_SIZE:
+                            status.append((img_full_fpath, timestamp_s, CAM_UNEXPECTED_SHAPE, str(img_np.shape)))
+                            n_errors_so_far += 1
+                            continue
                         else:
-                            status.append((img_fpath, timestamp_s, "OK", ""))
+                            # Might indicate bad cases of over/underexposure. Likely won't trigger if the sensor is covered
+                            # by snow (mean is larger than 5-10), which is fine since it's valid data.
+                            img_mean = img_np.mean()
+                            if img_mean < 5:
+                                status.append((img_full_fpath, timestamp_s, CAM_MEAN_TOO_LOW, str(img_mean)))
+                            elif img_mean > 250:
+                                status.append((img_full_fpath, timestamp_s, CAM_MEAN_TOO_HIGH, str(img_mean)))
+                            else:
+                                status.append((img_full_fpath, timestamp_s, "OK", ""))
                 except Exception as err:
-                    # err_msg = f"ERROR: General error reading image {str(e)}"
-                    status.append((img_fpath, timestamp_s, CAM_UNEXPECTED_CORRUPTION, str(err)))
+                    status.append((img_full_fpath, timestamp_s, CAM_UNEXPECTED_CORRUPTION, str(err)))
                     n_errors_so_far += 1
                     continue
 
@@ -757,8 +786,10 @@ class MonkeyWrench:
             with out_fs.open(report_fpath, "w") as csvfile:
                 writer = csv.writer(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
                 writer.writerow(["img_fpath_in_cam", "timestamp", "status", "details"])
-                for path, timestamp, message, details in status:
+                for idx, (path, timestamp, message, details) in enumerate(status):
                     writer.writerow([path, timestamp, message, details])
+                    if idx < 5:
+                        print(f"{path} {timestamp} {message} {details}")
 
         report = ""
         report += "Date: " + datetime.isoformat(datetime.now()) + "\n"
@@ -895,7 +926,7 @@ class MonkeyWrench:
             if max_lat > 40.95:
                 errors.append(("raw_wgs84_poses_dense", f"invalid max latitude {max_lat:.8f}"))
         except (RuntimeError, ValueError) as err:
-            errors.append(("raw_wgs84_poses_dense", "general error: " + str(e)))
+            errors.append(("raw_wgs84_poses_dense", "general error: " + str(err)))
 
         # NOTE(andrei): Very long story, but semi-valid YAML due to weird syntax quirks. We can probably transpile these
         # files into JSON without too much effort if there is interest.
