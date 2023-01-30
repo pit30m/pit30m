@@ -105,6 +105,17 @@ class LogReader:
         with fs.open(index_fpath, "r") as f:
             return pd.read_csv(f)
 
+    @lru_cache(maxsize=16)
+    def get_cam_geo_index_utm(self, cam_name: str):
+        # TODO(andrei): Document better and avoid duplication between this and WGS84.
+        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", "utm.csv")
+        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
+        if not fs.exists(index_fpath):
+            raise ValueError(f"Index file not found: {index_fpath}!")
+
+        with fs.open(index_fpath, "r") as f:
+            return pd.read_csv(f)
+
     def calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "mono_camera_calibration.npy")
         with fsspec.open(calib_fpath, "rb") as f:

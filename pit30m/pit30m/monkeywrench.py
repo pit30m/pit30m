@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import multiprocessing as mp
 import logging
 from functools import cached_property
+from collections import Counter
 from datetime import datetime
 from enum import Enum
 import numpy as np
@@ -18,7 +19,7 @@ from PIL import Image
 import lzma
 from lzma import LZMAError
 from tqdm import tqdm
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, Memory
 from typing import Optional, List, Tuple, Union
 from urllib.parse import urlparse, urljoin
 
@@ -26,6 +27,7 @@ from pit30m.camera import CamName
 from pit30m.data.log_reader import LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import associate
+from pit30m.fs_util import cached_glob_images
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
@@ -41,6 +43,7 @@ CAM_MEAN_TOO_HIGH = "cam_mean_too_high"
 INVALID_REPORT = "invalid_report"
 
 VALIDATION_CANARY_FNAME = ".pit30m_valid_v0"
+DEFAULT_INDEX_FNAME = "index/index_v0.npy"
 ETL_CANARY_FNAME = ".pit30m_done"
 PIT30M_IMAGE_CANARY_DONE = ".pit30m_image_done"
 PIT30M_NONIMAGE_CANARY_DONE = ".pit30m_nonimage_done"
@@ -55,6 +58,7 @@ KNOWN_INCOMPLETE_CAMERAS = [
     # Confirmed 2022-11-24 - only has hdcam_02_starboard_front_roof_wide
     "dc3d9c11-5ec7-41cd-d4e0-ec795cdae27d",
 ]
+
 
 
 @dataclass
@@ -77,7 +81,7 @@ class LogStatus(Enum):
     NOT_ATTEMPTED = "not_attempted"
     DONE_NOT_INDEXED = "done_not_indexed"
     CRASHED_OR_IN_PROGRESS = "crashed_or_in_progress"
-    VALIDATED = "validated"
+    INDEXED = "INDEXED"
 
     NEEDS_FINAL_RECEIPT = "needs_final_receipt"
     ONLY_GPU_DONE = "only_gpu_done"
@@ -89,9 +93,9 @@ def query_log_status(root, log_id) -> LogStatus:
     out_log_root = os.path.join(root, log_id.lstrip("/"))
     if not out_fs.exists(out_log_root):
         return LogStatus.NOT_ATTEMPTED
-    elif out_fs.exists(os.path.join(out_log_root, VALIDATION_CANARY_FNAME)):
-        # Log validated successfully. We gucci.
-        return LogStatus.VALIDATED
+    # elif out_fs.exists(os.path.join(out_log_root, DEFAULT_INDEX_FNAME)):
+    #     # TODO(andrei): Aggregate indexes or at least check they're all there unless a camera is missing.
+    #     return LogStatus.INDEXED
     elif out_fs.exists(os.path.join(out_log_root, ETL_CANARY_FNAME)):
         # Log was dumped but not yet indexed
         return LogStatus.DONE_NOT_INDEXED
@@ -116,20 +120,56 @@ def query_log_status(root, log_id) -> LogStatus:
             return LogStatus.CRASHED_OR_IN_PROGRESS
 
 
-def qls_it(root, log_ids, batch_size, max):
-    pool = Parallel(n_jobs=-1)
+def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
+    fs = fsspec.filesystem(urlparse(root).scheme)
+    log_root = os.path.join(root, log_id.lstrip("/"))
+    if not fs.exists(log_root):
+        # n/A for a non-attempted log
+        return None
+    if not fs.exists(os.path.join(log_root, ETL_CANARY_FNAME)):
+        # Dumping is incomplete (use 'stat' to get dumping status differentiation)
+        return None
+
+    if not fs.exists(os.path.join(log_root, "all_poses.npz.lz4")):
+        # Safeguard: Don't make Andrei have a heart attack if the log didn't have poses to being with.
+        # These were skipped for some logs INTENTIONALLY.
+        return None
+
+    cam_images = {}
+    for cam in CamName:
+        cam_dir = os.path.join(log_root, "cameras", cam.value)
+        index_fpath = os.path.join(cam_dir, "index", f"index_v{index_version}.npy")
+
+        if not fs.exists(index_fpath):
+            # Camera not dumped
+            cam_images[cam] = -1
+            continue
+
+        with fs.open(index_fpath, "rb") as f:
+            index = np.load(f, allow_pickle=False) #, mmap_mode="r")
+            cam_images[cam] = index.shape[0]
+
+    counts = list(cam_images.values())
+    if all(v == -1 for v in counts):
+        # No indexing done yet, let's not make the mistake of counting this as a failure.
+        return None
+
+    return cam_images
+
+
+
+def qls_it(root: str, log_ids: list[str], batch_size: int):
+    """Parallelized iterator version of query_log_status."""
+    # Over-subscribing is fine for network-bound tasks.
+    pool = Parallel(n_jobs=mp.cpu_count() * 10)
 
     for i in range(0, len(log_ids), batch_size):
         res = pool(
             delayed(query_log_status)(root, log_id)
-            for log_id in log_ids[i : i + batch_size]
+            for log_id in log_ids[i : min(i + batch_size, len(log_ids))]
         )
-        # TODO(andrei): Invoke next batch while yielding current.
         for element in res:
-            yield res
-
-        if i + batch_size > max:
-            break
+            yield element
 
 
 class MonkeyWrench:
@@ -212,36 +252,164 @@ class MonkeyWrench:
         """Next logs to validate."""
         pass
 
+    def stat(self, max: int = 100, quiet: bool = False):
+        all_logs = self.all_logs[:max]
+
+        statuses = []
+        for log, status in zip(all_logs, qls_it(self._root, all_logs, batch_size=250)):
+            statuses.append(status)
+            if not quiet:
+                print(log, status)
+
+        counts = Counter(statuses)
+        print(f"Stats for up to {max} dumped Pit30M logs:")
+        for status, count in counts.items():
+            print(f"{status.name}: {count}")
+        print("=" * 80)
+
+    def stat_sensors(self, start: int = 0, max: int = 100, min_img: int = 10):
+        """Gets statistics over the sensors in the dataset.
+
+        Args:
+            start:      The index of the first log to analyze.
+            max:        The index of the last log to analyze (exclusive).
+            min_img:    The minimum number of images a sensor must have to count as "present".
+        """
+        # TODO(andrei): Missing cameras.
+        #   - % of logs with at least one missing camera.
+        #   - % of logs with middle front wide
+        #   - % of logs with stereo
+        #   - % of logs with all cameras present
+        #   - % of logs with all non-stereo cameras present
+        # TODO(andrei): Similar analysis for MISMATCHED cameras (say more than 20% difference
+        # in camera counts between cameras)
+
+        all_logs = self.all_logs[start:max]
+        # Not pure I/O, so should not over-subscribe
+        pool = Parallel(n_jobs=-1, verbose=10)
+        results = pool(delayed(stat_sensors_for_log)(self._root, log) for log in all_logs)
+
+        total = len(results)
+        no_index = 0
+        none_missing = 0
+        just_one_missing = 0
+        two_plus_missing = 0
+        has_stereo_total = 0
+        has_surround = 0
+        all_missing = 0
+        has_middle_front_wide = 0
+        mismatched_counts = []
+        assert len(results) == len(all_logs)
+        for r, log_id in zip(results, all_logs):
+            if r is None:
+                no_index += 1
+            else:
+                has_stereo = (r.get(CamName.MIDDLE_FRONT_NARROW_LEFT, 0) >= min_img and
+                    r.get(CamName.MIDDLE_FRONT_NARROW_RIGHT) >= min_img)
+                has_non_stereo = r[CamName.MIDDLE_FRONT_WIDE] >= min_img and \
+                    r[CamName.PORT_FRONT_WIDE] >= min_img and \
+                    r[CamName.STARBOARD_FRONT_WIDE] >= min_img and \
+                    r[CamName.PORT_REAR_WIDE] >= min_img and \
+                    r[CamName.STARBOARD_REAR_WIDE] >= min_img
+
+                missing = 0
+                for cam in CamName:
+                    if r[cam] < min_img:
+                        missing += 1
+
+                if missing == 0:
+                    assert has_non_stereo and has_stereo
+                    none_missing += 1
+                elif missing == 1:
+                    just_one_missing += 1
+                else:
+                    two_plus_missing += 1
+                    if missing == 7:
+                        print(f"WARNING: Log {log_id} has all missing cameras!")
+                        all_missing += 1
+
+                if has_non_stereo:
+                    has_surround += 1
+                if has_stereo:
+                    has_stereo_total += 1
+
+                if r[CamName.MIDDLE_FRONT_WIDE] >= min_img:
+                    has_middle_front_wide += 1
+
+                mismatched = False
+                counts = np.array([count for count in r.values() if count >= min_img])
+                if len(counts) > 0:
+                    # print(counts.max(), counts.min(), "!!!")
+                    if counts.max() - counts.min() > counts.max() * 0.1:
+                        mismatched = True
+
+                    if mismatched:
+                        mismatched_counts.append(log_id)
+
+
+
+        indexed = total - no_index
+        print(f"Stats for up {start}:{max} dumped Pit30M logs:")
+        print(f"Total checked:          {total}")
+        print(f"Not indexed yet:        {no_index}")
+        print("-" * 80)
+        print(f"Indexed:                {indexed}")
+        print(f"None missing:           {none_missing}")
+        print(f"Just one missing:       {just_one_missing}")
+        print(f"Two or more missing:    {two_plus_missing}")
+        print(f"All missing:            {all_missing}")
+        print("-" * 80)
+        print(f"Has stereo:             {has_stereo_total}")
+        print(f"Has surround:           {has_surround}")
+        print(f"Has middle front wide:  {has_middle_front_wide}")
+        print("-" * 80)
+        # These are out of the PRESENT cameras.
+        print(f"Mismatched counts:      {len(mismatched_counts)}")
+        print("=" * 80)
+
+
     def next_to_etl(self, max: int = 10, include_attempted_but_incomplete: bool = False, kind: str = "gpu",
-            batch_size: int = 32, n_read_workers: int = 12, webp_out_quality: int = 85):
-        all_logs = self.all_logs
+            batch_size: int = 32, n_read_workers: int = 14, webp_out_quality: int = 85, input_limit: int = 300):
+        """Computes internal dump commands for the next logs to process.
+
+        Args:
+            max:    Maximum number of logs to RETURN.
+            ...
+            input_limit: Maximum number of logs to CONSIDER. Useful for working our way through the dataset.
+        """
+        all_logs = self.all_logs[:input_limit]
         not_attempted = []
         crashed_or_in_progress = []
 
-        need_gpu_job = []
-        need_cpu_job = []
+        attempted_but_need_gpu_job = []
+        attempted_but_need_cpu_job = []
         need_only_receipt = []
         effective_list = []
 
-        for log_id in all_logs:
-            status = query_log_status(self._root, log_id)
+        for log_id, status in zip(all_logs, qls_it(self._root, all_logs, batch_size=50)):
             if status == LogStatus.NOT_ATTEMPTED:
-                # not_attempted.append(log_id)
-                need_gpu_job.append(log_id)
+                not_attempted.append(log_id)
             elif status == LogStatus.ONLY_CPU_DONE:
-                need_gpu_job.append(log_id)
+                attempted_but_need_gpu_job.append(log_id)
             elif status == LogStatus.ONLY_GPU_DONE:
-                need_cpu_job.append(log_id)
+                attempted_but_need_cpu_job.append(log_id)
             elif status == LogStatus.NEEDS_FINAL_RECEIPT:
                 need_only_receipt.append(log_id)
-            elif status == LogStatus.CRASHED_OR_IN_PROGRESS and include_attempted_but_incomplete:
+            elif status == LogStatus.CRASHED_OR_IN_PROGRESS:
                 crashed_or_in_progress.append(log_id)
 
-            effective_list = need_gpu_job if kind == "gpu" else need_cpu_job
+            effective_list = not_attempted
             if include_attempted_but_incomplete:
                 effective_list += crashed_or_in_progress
+                if kind == "gpu":
+                    effective_list += attempted_but_need_gpu_job
+                elif kind == "cpu":
+                    effective_list += attempted_but_need_cpu_job
+                else:
+                    raise ValueError()
             # effective_list = crashed_or_in_progress
 
+            effective_list = list(set(effective_list))
             if max > 0 and len(effective_list) >= max:
                 break
 
@@ -518,6 +686,56 @@ class MonkeyWrench:
             for cam in CamName:
                 self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
 
+    def index_camera_v2(
+        self,
+        log_id: str,
+        cam_name: Union[CamName, str],
+        out_index_fpath: Optional[str] = None,
+        check: bool = False,
+        pb_position: int = 0,
+        debug_max_errors: int = 0,
+        reindex: bool = False,
+    ):
+        """v2 indexer - parallel reading and no image loading. Please see `index_all_cameras` for info."""
+        in_scheme = urlparse(self._root).scheme
+        out_scheme = urlparse(out_index_fpath).scheme
+        in_fs = fsspec.filesystem(in_scheme)
+        out_fs = fsspec.filesystem(out_scheme)
+        if isinstance(cam_name, str):
+            cam_name = CamName(cam_name)
+
+        self._logger.info("Setting up log reader to process camera %s", cam_name.value)
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        log_reader = LogReader(log_root_uri=log_root, map=self.map)
+        cam_dir = os.path.join(log_root, "cameras", cam_name.value.lstrip("/"))
+        status = []
+        if out_index_fpath is None:
+            out_index_fpath = os.path.join(cam_dir, "index")
+
+        utm_index_fpath = os.path.join(out_index_fpath, "utm.csv")
+        if in_fs.exists(utm_index_fpath) and not reindex:
+            self._logger.info("Index already exists at %s", out_index_fpath)
+            return
+
+        self._logger.info("Reading continuous pose data")
+        cp_dense = log_reader.continuous_pose_dense
+        cp_times = cp_dense[:, 0]
+
+        self._logger.info("Reading UTM and MRP")
+        utm_poses = log_reader.utm_poses_dense
+        mrp_poses = log_reader.map_relative_poses_dense
+        assert len(mrp_poses) == len(utm_poses)
+        mrp_times = mrp_poses["time"]
+
+        self._logger.info("Listing all images")
+        image_uris = cached_glob_images(cam_dir, in_fs)
+        print("There are", len(image_uris), "images in", cam_dir)
+
+
+
+        # with out_fs.open(utm_index_fpath, "wt") as out_f:
+        #     pass
+
     def index_camera(
         self,
         log_id: str,
@@ -525,6 +743,8 @@ class MonkeyWrench:
         out_index_fpath: Optional[str] = None,
         check: bool = False,
         pb_position: int = 0,
+        debug_max_errors: int = 0,
+        reindex: bool = False,
     ):
         """Please see `index_all_cameras` for info."""
         scheme = urlparse(self._root).scheme
@@ -553,6 +773,10 @@ class MonkeyWrench:
         unindexed_fpath = os.path.join(out_index_fpath, "unindexed.csv")
         report_fpath = os.path.join(out_index_fpath, "report.csv")
 
+        if in_fs.exists(report_fpath) and not reindex:
+            print("Index already exists at", out_index_fpath)
+            return
+
         # if not os.path.exists(os.path.join(log_root, "all_poses.npz.lz4")):
         #     continue
 
@@ -571,7 +795,6 @@ class MonkeyWrench:
         self._logger.info("Starting to index camera data. [%s]", check_status)
         index = []
         n_errors_so_far = 0
-        debug_max_errors = 10
 
         progress_bar = tqdm(
             sorted(in_fs.glob(os.path.join(cam_dir, "*", "*.webp"))),
@@ -775,7 +998,7 @@ class MonkeyWrench:
                         mrp_pose["roll"],
                         mrp_pose["pitch"],
                         mrp_pose["yaw"],
-                        mrp_pose["submap_id"],
+                        str(mrp_pose["submap_id"]),
                     ]
                     + list(img_row)
                 )
@@ -1257,9 +1480,6 @@ class MonkeyWrench:
                 if subentry.endswith(".webp"):
                     print(subentry)
                     break
-
-
-
 
 def print_list_with_limit(lst, limit: int) -> None:
     for entry in lst[:limit]:

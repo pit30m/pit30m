@@ -26,6 +26,10 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
     # Fortunately, for such small intervals, linear interpolation should be OK.
     result = np.zeros(query_timestamps.shape, dtype=np.int64)
 
+    assert target_timestamps.shape[0] > 0
+    assert target_timestamps.dtype == np.float64 or target_timestamps.dtype == np.float32
+    assert query_timestamps.dtype == np.float64 or query_timestamps.dtype == np.float32
+
     # TODO(andrei): speed up further with np.interpolate
     for q_idx, q_ts in enumerate(query_timestamps):
         target_idx = np.searchsorted(target_timestamps, q_ts, side="left")
@@ -43,7 +47,7 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
             target_idx = target_idx - 1
 
         delta_s = abs(q_ts - target_timestamps[target_idx])
-        if delta_s > max_delta_s:
+        if max_delta_s > 0 and delta_s > max_delta_s:
             print(f"WARNING: Timestamp association gap is {delta_s:.3f}s for query {q_idx}.")
         result[q_idx] = target_idx
 

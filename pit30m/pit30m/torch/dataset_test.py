@@ -1,6 +1,6 @@
 import pytest
 
-from pit30m.torch.dataset import Pit30MDataset
+from pit30m.torch.dataset import Pit30MLogDataset
 
 
 TEST_DATA_ROOT = "/mnt/data/pit30m/out/sample_out_v6"
