@@ -56,6 +56,8 @@ class LogReader:
 
         Specifically, using abstractions like pytorch DataLoaders can dramatically improve throughput, e.g., going from
         20-30 images per second to 100+.
+
+        XXX(andrei): Document how indexes may have space-padded names to avoid having people pull their hair out!
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
@@ -183,7 +185,14 @@ class LogReader:
 
     @cached_property
     def map_relative_poses_dense(self) -> np.ndarray:
-        """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap."""
+        """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap.
+
+        WARNING:
+            - As of 2023-02, the submaps are not 100% globally consistent. Topometric pose accuracy is cm-level, but
+            the utms of the maps are noisy for historic reasons.
+            - As of 2023-02, some submap IDs may have insufficient bytes.
+                - Use `.ljust` to fix that - see the `utm_poses_dense` function for info.
+        """
         # Poses contain just the data as a structured numpy array. Each pose object contains a continuous, smooth,
         # log-specific pose, and a map-relative pose. The map relative pose (MRP) takes vehicle points into the
         # current submap, whose ID is indicated by the 'submap' field of the MRP.

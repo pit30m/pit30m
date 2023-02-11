@@ -138,7 +138,13 @@ def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
     cam_images = {}
     for cam in CamName:
         cam_dir = os.path.join(log_root, "cameras", cam.value)
-        index_fpath = os.path.join(cam_dir, "index", f"index_v{index_version}.npy")
+        # Load the 'npz' since we are OK with CPU overhead for saving network bandwidth.
+        # As of 2023-02-04, stat_sensors 0..750
+        #  - Before:                8.2 min
+        #  - w/ npz:                2.8 min
+        #  - w/ npz + 2x processes: 2.2 min (1Gbps net is saturated)
+        #
+        index_fpath = os.path.join(cam_dir, "index", f"index_v{index_version}.npz")
 
         if not fs.exists(index_fpath):
             # Camera not dumped
@@ -146,7 +152,7 @@ def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
             continue
 
         with fs.open(index_fpath, "rb") as f:
-            index = np.load(f, allow_pickle=False) #, mmap_mode="r")
+            index = np.load(f, allow_pickle=False)["index"]
             cam_images[cam] = index.shape[0]
 
     counts = list(cam_images.values())
@@ -183,10 +189,12 @@ class MonkeyWrench:
     ) -> None:
         """Dataset administration tool for the Pit30M dataset (geo-indexing, data integrity checks, etc.)
 
-        For regular end users, `pit30m.cli` is almost always what you should use.
+        Primarily designed for dataset maintainers and advanced users. For regular end users, `pit30m.cli` is almost
+        always what you should use.
 
-        Users of the dataset won't have permissions to modify the official dataset, but they can use this tool to create
-        custom indexes and subsets of the dataset.
+        Non-administrator users of the dataset won't have permissions to modify the official dataset, but they can use
+        this tool to create custom indexes and subsets of the dataset, as well as using it as a reference for how the
+        dataset is organized, indexed, etc.
         """
         self._root = dataset_root
         self._metadata_root = metadata_root
@@ -267,7 +275,13 @@ class MonkeyWrench:
             print(f"{status.name}: {count}")
         print("=" * 80)
 
-    def stat_sensors(self, start: int = 0, max: int = 100, min_img: int = 10):
+    def stat_log(self, log_id: str) -> None:
+        print(log_id)
+        print(query_log_status(self._root, log_id))
+        print("=" * 80)
+        print(stat_sensors_for_log(self._root, log_id))
+
+    def stat_sensors(self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp"):
         """Gets statistics over the sensors in the dataset.
 
         Args:
@@ -285,18 +299,17 @@ class MonkeyWrench:
         # in camera counts between cameras)
 
         all_logs = self.all_logs[start:max]
-        # Not pure I/O, so should not over-subscribe
-        pool = Parallel(n_jobs=-1, verbose=10)
+        pool = Parallel(n_jobs=mp.cpu_count() * 2, verbose=10)
         results = pool(delayed(stat_sensors_for_log)(self._root, log) for log in all_logs)
 
         total = len(results)
         no_index = 0
         none_missing = 0
-        just_one_missing = 0
-        two_plus_missing = 0
+        just_one_missing = []
+        two_plus_missing = []
         has_stereo_total = 0
         has_surround = 0
-        all_missing = 0
+        all_missing = []
         has_middle_front_wide = 0
         mismatched_counts = []
         assert len(results) == len(all_logs)
@@ -321,12 +334,12 @@ class MonkeyWrench:
                     assert has_non_stereo and has_stereo
                     none_missing += 1
                 elif missing == 1:
-                    just_one_missing += 1
+                    just_one_missing.append(log_id)
                 else:
-                    two_plus_missing += 1
+                    two_plus_missing.append(log_id)
                     if missing == 7:
                         print(f"WARNING: Log {log_id} has all missing cameras!")
-                        all_missing += 1
+                        all_missing.append(log_id)
 
                 if has_non_stereo:
                     has_surround += 1
@@ -346,8 +359,6 @@ class MonkeyWrench:
                     if mismatched:
                         mismatched_counts.append(log_id)
 
-
-
         indexed = total - no_index
         print(f"Stats for up {start}:{max} dumped Pit30M logs:")
         print(f"Total checked:          {total}")
@@ -355,9 +366,9 @@ class MonkeyWrench:
         print("-" * 80)
         print(f"Indexed:                {indexed}")
         print(f"None missing:           {none_missing}")
-        print(f"Just one missing:       {just_one_missing}")
-        print(f"Two or more missing:    {two_plus_missing}")
-        print(f"All missing:            {all_missing}")
+        print(f"Just one missing:       {len(just_one_missing)}")
+        print(f"Two or more missing:    {len(two_plus_missing)}")
+        print(f"All missing:            {len(all_missing)}")
         print("-" * 80)
         print(f"Has stereo:             {has_stereo_total}")
         print(f"Has surround:           {has_surround}")
@@ -365,8 +376,38 @@ class MonkeyWrench:
         print("-" * 80)
         # These are out of the PRESENT cameras.
         print(f"Mismatched counts:      {len(mismatched_counts)}")
+        print_list_with_limit(mismatched_counts, 10)
         print("=" * 80)
 
+        out_one_missing_fpath = os.path.join(out_root, "one_missing_ids.txt")
+        with open(out_one_missing_fpath, "w") as f:
+            f.write("\n".join(map(str, just_one_missing)))
+
+        out_two_plus_missing_fpath = os.path.join(out_root, "two_plus_missing_ids.txt")
+        with open(out_two_plus_missing_fpath, "w") as f:
+            f.write("\n".join(map(str, two_plus_missing)))
+
+        all_missing_fpath = os.path.join(out_root, "all_missing_ids.txt")
+        with open(all_missing_fpath, "w") as f:
+            f.write("\n".join(map(str, all_missing)))
+
+        print(f"Wrote statistic lists to {out_root}")
+
+    def next_to_index(self, max: int = 10, input_limit: int = 300):
+        """Prints internal index commands for indexing logs which need indexing."""
+        all_logs = self.all_logs[:input_limit]
+        to_index = []
+
+        for log_id, status in zip(all_logs, qls_it(self._root, all_logs, batch_size=50)):
+            if status == LogStatus.DONE_NOT_INDEXED:
+                to_index.append(log_id)
+
+            if len(to_index) >= max:
+                break
+
+        for log_id in to_index:
+            # XXX(andrei): Iron out this command.
+            print(f"python monkeywrench.py index_all_cameras {log_id} --root s3://pit30m/")
 
     def next_to_etl(self, max: int = 10, include_attempted_but_incomplete: bool = False, kind: str = "gpu",
             batch_size: int = 32, n_read_workers: int = 14, webp_out_quality: int = 85, input_limit: int = 300):
@@ -425,6 +466,52 @@ class MonkeyWrench:
             elif kind == "cpu":
                 print(f"python process.py etl_non_images {log_id} --out-root s3://pit30m/ " \
                     f"--n-read-workers {int(n_read_workers)}")
+
+    def backup_specific_files(self, original_base_uri: str, log_id: str, out_root: str, files: List[str]):
+        in_fs = fsspec.filesystem(urlparse(original_base_uri).scheme)
+        out_fs = fsspec.filesystem(urlparse(out_root).scheme)
+        out_fs.makedirs(os.path.join(out_root, log_id), exist_ok=True)
+
+        log_id = log_id.strip("/")
+
+        NO_WGS_LOG_IDS = [
+            "5fab9d4e-7a12-49d5-f0f6-5da87b64f3f3",
+        ]
+
+        for file in files:
+            in_uri = os.path.join(original_base_uri, log_id, file)
+            out_uri = os.path.join(out_root, log_id, file)
+            # print(in_uri)
+            # print(out_uri)
+
+            if out_fs.exists(out_uri):
+                # print(f"File {out_uri} already exists. Skipping.")
+                continue
+
+            if not in_fs.exists(in_uri):
+                # Fitted trajectories are OK to be missing.
+                if "fitted" in in_uri:
+                    print(f"File {in_uri} does not exist (expected). Skipping.")
+                    continue
+                elif "wgs84" in in_uri and log_id in NO_WGS_LOG_IDS:
+                    print(f"WGS file {in_uri} does not exist (expected). Skipping.")
+                    continue
+
+                print(in_uri)
+                print(log_id)
+                print(type(log_id))
+
+            with fsspec.open(in_uri, "rb") as in_f:
+                with fsspec.open(out_uri, "wb") as out_f:
+                    out_f.write(in_f.read())
+
+    def backup_all_specific_files(self, original_base_uri: str, out_root: str, files: Union[str, List[str]]):
+        if isinstance(files, str):
+            files = files.split(",")
+
+        print(f"Backing up files: {files}")
+        for log_id in tqdm(self.all_logs):
+            self.backup_specific_files(original_base_uri, log_id, out_root, files)
 
     def index_lidar(
         self,
