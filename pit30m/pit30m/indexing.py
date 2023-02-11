@@ -1,7 +1,13 @@
 """Utility functions for timing, data association, and indexing."""
 
+import multiprocessing as mp
+from urllib.parse import urlparse
+
 import fsspec
 import numpy as np
+from joblib import Parallel, delayed
+
+from pit30m.fs_util import cached_glob_images
 
 MAX_IMG_RELPATH_LEN = 22 # = len("0090/000000.night.webp")
 # 1M images in a log would mean 100k seconds = A 27h nonstop log.
@@ -119,3 +125,124 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
     return result
 
 
+def build_index(in_root, log_reader, cam_dir, _logger):
+    """Internal function to build an index for a sensor in a log."""
+    _logger.info("Reading continuous pose data")
+    cp_dense = log_reader.continuous_pose_dense
+    cp_times = np.array(cp_dense[:, 0])
+    in_scheme = urlparse(in_root).scheme
+    in_fs = fsspec.filesystem(in_scheme)
+
+    _logger.info("Reading UTM and MRP")
+    # Note that UTM is inferred from MRP via (very much imperfect) submap UTMs
+    utm_poses = log_reader.utm_poses_dense
+    mrp_poses = log_reader.map_relative_poses_dense
+    assert len(mrp_poses) == len(utm_poses)
+    mrp_times = np.array(mrp_poses["time"])
+
+    _logger.info("Listing all images from %s", cam_dir)
+    image_uris = cached_glob_images(cam_dir, in_fs)
+    _logger.info("There are %d images in %s", len(image_uris), cam_dir)
+
+    h = len(image_uris) / 10.0 / 3600.0
+    print(f"{h:.2f} hours of driving")
+
+    # NOTE(andrei): Seems to be worth over-subscribing!
+    #
+    # Coarse numbers from my personal machine, 16 core 1Gbps connection to S3.
+    # 16, 1min = 8k samples
+    # 32, 1min = 16k samples
+    # 64, 1min = 32.3k samples
+    # 128, 1 min = ~54k samples (finished my input)
+    # 128, 30s = 29k
+    # 256, 30s = 54k (though I think my upload speed is unnaturally fast... (for the requests))
+    # 256, 15s (bs = 4) = 23.5k, 28k, ...
+    # 256, 15s, bs = 8  = 28.8k
+    # 512, 15s = 14.9k
+    #
+    # This subsequently got a fair bit slower once I actually parsed the npy, oh well
+    pool = Parallel(n_jobs=mp.cpu_count() * 8, verbose=1, batch_size=8)
+    _logger.info("Fetching metadata...")
+    res = pool(delayed(fetch_metadata_for_image)(x) for x in image_uris)
+    _logger.info("Fetched %d results", len(res))
+
+    image_times = np.array([float(entry[1][0]) for entry in res])
+    _logger.info("Associating...")
+    _logger.info("%s %s %s %s", image_times.dtype, str(image_times.shape),
+                str(image_times[0]) if len(image_times) else "n/A",
+                str(type(image_times[0])) if len(image_times) else "n/A")
+    _logger.info("%s %s %s %s", mrp_times.dtype, str(mrp_times.shape),
+                str(mrp_times[0]), str(type(mrp_times[0])))
+    assert np.all(mrp_times[1:] > mrp_times[:-1])
+
+    utm_and_mrp_index = associate(image_times, mrp_times, max_delta_s=-1.0)
+    _logger.info("Associating complete.")
+    matched_timestamps_mrp = mrp_times[utm_and_mrp_index]
+    deltas_mrp = np.abs(matched_timestamps_mrp - image_times)
+
+    _logger.info("Associating CP...")
+    cp_index = associate(image_times, cp_times, max_delta_s=-1.0)
+    _logger.info("Associating complete.")
+    matched_timestamps_cp = cp_times[cp_index]
+    deltas_cp = np.abs(matched_timestamps_cp - image_times)
+
+    unindexed_frames = []
+    status = []
+    raw_index = []
+    for row_idx, ((img_fpath, img_data), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in enumerate(zip(
+        res, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp
+    )):
+        img_time, shutter_s, seq_counter, gain_db = img_data
+        if delta_mrp_s > 0.10:
+            mrp = None
+            mrp_present = False
+            mrp_valid = False
+            mrp_time_s, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            mrp_submap_id = b'\x00' * 16
+            utm = None
+            utm_x, utm_y, utm_z = 0.0, 0.0, 0.0
+        else:
+            mrp = mrp_poses[pose_idx, ...].tolist()
+            utm = utm_poses[pose_idx, ...].tolist()
+            mrp_present = True
+            mrp_time_s, mrp_valid, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = mrp
+            utm_x, utm_y = utm
+            # TODO(andrei): Update me
+            utm_z = 0
+
+            # Handle submap IDs which were truncated upon encoded due to ending with a zero.
+            mrp_submap_id = mrp_submap_id.ljust(16, b"\x00")
+            assert type(mrp_submap_id) == bytes
+            assert 16 == len(mrp_submap_id)
+
+
+        if delta_cp_s > 0.10:
+            cp_present = False
+            cp_valid = False
+            cp_time_s, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        else:
+            cp = cp_dense[cp_idx, ...]
+            cp_present = True
+            (cp_time_s, cp_valid, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw) = cp
+            cp_valid = bool(cp_valid)
+
+        img_rel_fpath = "/".join(img_fpath.split("/")[-2:])
+        assert len(img_rel_fpath) <= MAX_IMG_RELPATH_LEN
+        img_rel_fpath = img_rel_fpath.ljust(MAX_IMG_RELPATH_LEN, " ")
+        raw_index.append((
+            img_rel_fpath, img_time, shutter_s, seq_counter, gain_db,
+            cp_present, cp_valid, cp_time_s, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw,
+            mrp_present, mrp_valid, mrp_time_s, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw,
+            # No MRP === No UTM
+            mrp_present, mrp_present, utm_x, utm_y, utm_z))
+
+    index = np.array(raw_index, dtype=INDEX_V0_0_DTYPE)
+
+    cp_p = index["cp_present"]
+    print("CP total:", len(cp_p))
+    print("CP valid:", sum(cp_p))
+
+    mrp_p = index["mrp_present"]
+    print("MRP total:", len(mrp_p))
+    print("MRP valid:", sum(mrp_p))
+    return index

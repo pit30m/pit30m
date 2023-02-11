@@ -8,7 +8,7 @@ from joblib import Parallel, delayed, Memory
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
-@memory.cache(ignore=["fs"], verbose=10)
+@memory.cache(ignore=["fs"], verbose=0)
 def cached_glob_images(root_dir: str, fs: Optional[fsspec.AbstractFileSystem]) -> list[str]:
     scheme = urlparse(root_dir).scheme
     if fs is None:
