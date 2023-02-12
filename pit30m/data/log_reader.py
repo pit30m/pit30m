@@ -1,5 +1,6 @@
 import csv
 import lz4
+import time
 from dataclasses import dataclass
 import ipdb
 import os
@@ -48,6 +49,7 @@ class LogReader:
         pose_fname: str = "all_poses.npz.lz4",
         wgs84_pose_fname: str = "wgs84.npz.lz4",
         map: Map = None,
+        index_version: int = 0,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -67,6 +69,7 @@ class LogReader:
             log_parent = os.path.dirname(self._log_root_uri)
             map = Map.from_submap_utm_uri(os.path.join(log_parent, "submap_utm.pkl"))
         self._map = map
+        self._index_version = index_version
 
 
     @property
@@ -75,6 +78,7 @@ class LogReader:
 
     @property
     def cam_root(self):
+        """Root for all the camera data (each camera is a subdirectory)."""
         return os.path.join(self._log_root_uri, "cameras")
 
     @property
@@ -85,7 +89,6 @@ class LogReader:
     def get_cam_root(self, cam_name: CamName):
         assert isinstance(cam_name, CamName)
         return os.path.join(self._log_root_uri, "cameras", cam_name.value)
-
 
     @lru_cache(maxsize=16)
     def get_lidar_geo_index(self):
@@ -98,25 +101,15 @@ class LogReader:
             return pd.read_csv(f)
 
     @lru_cache(maxsize=16)
-    def get_cam_geo_index(self, cam_name: str):
-        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", "wgs84.csv")
+    def get_cam_geo_index(self, cam_name: str) -> np.ndarray:
+        """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE."""
+        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
         fs = fsspec.filesystem(urlparse(index_fpath).scheme)
         if not fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
-        with fs.open(index_fpath, "r") as f:
-            return pd.read_csv(f)
-
-    @lru_cache(maxsize=16)
-    def get_cam_geo_index_utm(self, cam_name: str):
-        # TODO(andrei): Document better and avoid duplication between this and WGS84.
-        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", "utm.csv")
-        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
-        if not fs.exists(index_fpath):
-            raise ValueError(f"Index file not found: {index_fpath}!")
-
-        with fs.open(index_fpath, "r") as f:
-            return pd.read_csv(f)
+        with fs.open(index_fpath, "rb") as f:
+            return np.load(f)["index"]
 
     def calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "mono_camera_calibration.npy")
@@ -273,10 +266,34 @@ class LogReader:
         wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
         return wgs84_data
 
-    def get_image(self, cam_name: CamName, timestamp: float):
-        """Returns the image for the given camera and timestamp."""
-        # NOTE(andrei): For dataloader.
-        pass
+    # def get_image(self, cam_name: CamName, timestamp: float):
+    #     """Returns the image for the given camera and timestamp."""
+    #     # NOTE(andrei): For dataloader.
+
+    def get_image(self, rel_path: str):
+        # import boto3 # messes up credentials
+        # client = boto3.client("s3")
+
+        start = time.time()
+        fpath = os.path.join(self.get_cam_root(CamName.MIDDLE_FRONT_WIDE), rel_path)
+        # fpath = "/mnt/data/pit30m/out/sample_out_v6/0209f084-2efb-4acf-f2ce-e8f8a58c8b06/cameras/hdcam_12_middle_front_roof_wide/0052/005200.day.webp"
+        # ~35-40ms to open a LOCAL webp image
+        # 120-200ms to open an S3 webp image
+        # Slow AF
+        with fsspec.open(fpath, "rb") as f:
+            arr = np.asarray(Image.open(f))
+        # arr = np.asarray(Image.open(fpath))
+
+        # Open the image as a stream with boto
+        # print(fpath)
+        # prefix = fpath.split("pit30m/")[-1]
+        # response = client.get_object(Bucket="pit30m", Key=prefix)
+
+
+        dt = time.time() - start
+        # print(f"get_image took {dt*1000.0:.1f}ms")
+        # return np.zeros((100, 100, 3))
+        return arr
 
     def get_lidar(self, timestamp: float):
         """Returns the LiDAR scan for the given timestamp."""

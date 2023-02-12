@@ -614,7 +614,7 @@ class MonkeyWrench:
 
     def index_lidar_debug(self, log_index, reindex=False, index_version: int = 0):
         return self.index_lidar(self.all_logs[log_index], reindex=reindex, index_version=index_version,
-                                out_index_dir="/tmp/my_index/")
+                                out_index_dir=None)
 
     def index_lidar(
         self,

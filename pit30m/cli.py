@@ -27,6 +27,9 @@ class Pit30MCLI:
         self._read_pool = Parallel(n_jobs=mp.cpu_count())
         pass
 
+    def woof(self):
+        print("bow wow")
+
     def multicam_demo(self, dataset_base: str, log_uri: str, out_dir: str) -> None:
         in_fs = fsspec.filesystem(urlparse(dataset_base).scheme)
         out_fs = fsspec.filesystem(urlparse(out_dir).scheme)

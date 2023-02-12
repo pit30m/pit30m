@@ -2,6 +2,7 @@
 
 import multiprocessing as mp
 import os
+import ipdb
 from urllib.parse import urlparse
 
 import lz4
@@ -10,6 +11,7 @@ import numpy as np
 from joblib import Parallel, delayed, Memory
 
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
+from pit30m.util import print_list_with_limit
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
 MAX_IMG_RELPATH_LEN = 22        # = len("0090/000000.night.webp")
@@ -57,8 +59,12 @@ CAM_INDEX_V0_0_DTYPE = np.dtype([
 
 LIDAR_INDEX_V0_0_DTYPE = np.dtype([
     ("rel_path", str, MAX_LIDAR_RELPATH_LEN),
+    ("lidar_time", np.double),
     ("lidar_min_time", np.double),
     ("lidar_max_time", np.double),
+    ("lidar_mean_time", np.double),
+    ("lidar_median_time", np.double),
+    ("num_points", np.int64),
     ("cp_present", bool),
     ("cp_valid", bool),
     ("cp_time_s", np.double),
@@ -112,7 +118,7 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
         )
         return img_uri, entry
 
-@memory.cache(verbose=1)
+@memory.cache(verbose=0)
 def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
     """Returns LiDAR timing metadata."""
     # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
@@ -372,38 +378,86 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
     _logger.info("Fetched %d results", len(all_lidar_meta_info))
 
     errors = [x for x in all_lidar_meta_info if x[0] != "OK"]
-    print(f"Found {len(errors)} errors")
 
+    ts_path = os.path.join(lidar_dir, "timestamps.npz.lz4")
+    with in_fs.open(ts_path, "rb") as f:
+        with lz4.frame.open(f, mode="rb") as ff:
+            # These are the timestamps around which I dumped ~0.1s of LiDAR data.
+            #
+            # Motion compensation details are hazy; I think the LiDAR should be compensated to this frame, though it may
+            # also be to some other predefined time which was hardcoded by the log reader. Either way, the information
+            # is *there* (we have per-point times), it's just a matter of playing with projecting the LiDAR to the
+            # cameras in order to identify the exact time whose pose the LiDAR data is wrt to.
+            #
+            # This estimate will however be enough for simple visual localization tasks for now. I have a more
+            # overarching goal of sorting out LiDAR as the continuous-time sensor that it is once we get the first
+            # version of the devkit out.
+            dumped_timestamps = np.load(ff)["data"]["timestamp"].ravel()
 
-    raise RuntimeError("So far so good")
+    if len(errors) > 0:
+        print(f"Found {len(errors)} errors reading LiDAR for indexing purposes")
+        print_list_with_limit(errors, 10)
+        log_id = log_reader.log_id
+        raise RuntimeError(f"Could not index LIDAR for log ID {log_id} due to errors (see log)")
 
-    image_times = np.array([float(entry[1][0]) for entry in res])
+    # dmins = []
+    # dmaxs = []
+    lidar_info = []
+    # Please read the above detailed comment for what we mean by "LiDAR time".
+    lidar_times = []
+    for idx, (andrei_timestamp, (_, lidar_uri, min_time, max_time, mean_time, p50_time, shape)) in \
+        enumerate(zip(dumped_timestamps, all_lidar_meta_info)):
+        # NOTE(andrei): LIDAR is rolling shutter...
+        # if idx % 200 == 0:
+        #     print(f"{idx} / {len(lidar_sweep_uris)}")
+        #     print(f"min_time: {min_time}")
+        #     print(f"max_time: {max_time}")
+        #     # print(f"mean_time: {mean_time}")
+        #     print(f"{float(andrei_timestamp) = }")
+        #     # print(f"dmin/dmax: {dmin}/{dmax}")
+        num_points, pcd_dim = shape
+        assert 3 == pcd_dim
+
+        lidar_info.append((andrei_timestamp, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
+        lidar_times.append(andrei_timestamp)
+
+    lidar_times = np.array(lidar_times, dtype=np.float64)
+
+    #     dmin = andrei_timestamp - min_time
+    #     dmax = max_time - andrei_timestamp
+    #     dmins.append(dmin)
+    #     dmaxs.append(dmax)
+
+    # print(np.mean(dmins))
+    # print(np.mean(dmaxs))
+
     _logger.info("Associating...")
-    _logger.info("%s %s %s %s", image_times.dtype, str(image_times.shape),
-                str(image_times[0]) if len(image_times) else "n/A",
-                str(type(image_times[0])) if len(image_times) else "n/A")
+    _logger.info("%s %s %s %s", type(lidar_times), str(len(lidar_times)),
+                str(lidar_times[0]) if len(lidar_times) else "n/A",
+                str(type(lidar_times[0])) if len(lidar_times) else "n/A")
     _logger.info("%s %s %s %s", mrp_times.dtype, str(mrp_times.shape),
                 str(mrp_times[0]), str(type(mrp_times[0])))
     assert np.all(mrp_times[1:] > mrp_times[:-1])
 
-    utm_and_mrp_index = associate(image_times, mrp_times, max_delta_s=-1.0)
+    utm_and_mrp_index = associate(lidar_times, mrp_times, max_delta_s=-1.0)
     _logger.info("Associating complete.")
+
+
     matched_timestamps_mrp = mrp_times[utm_and_mrp_index]
-    deltas_mrp = np.abs(matched_timestamps_mrp - image_times)
+    deltas_mrp = np.abs(matched_timestamps_mrp - lidar_times)
 
     _logger.info("Associating CP...")
-    cp_index = associate(image_times, cp_times, max_delta_s=-1.0)
+    cp_index = associate(lidar_times, cp_times, max_delta_s=-1.0)
     _logger.info("Associating complete.")
     matched_timestamps_cp = cp_times[cp_index]
-    deltas_cp = np.abs(matched_timestamps_cp - image_times)
+    deltas_cp = np.abs(matched_timestamps_cp - lidar_times)
 
     unindexed_frames = []
     status = []
     raw_index = []
-    for row_idx, ((img_fpath, img_data), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in enumerate(zip(
-        res, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp
-    )):
-        img_time, shutter_s, seq_counter, gain_db = img_data
+    for ((lidar_time, lidar_fpath, min_time, max_time, mean_time, p50_time, npts), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in zip(
+        lidar_info, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp
+    ):
         if delta_mrp_s > 0.10:
             mrp = None
             mrp_present = False
@@ -437,17 +491,17 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
             (cp_time_s, cp_valid, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw) = cp
             cp_valid = bool(cp_valid)
 
-        img_rel_fpath = "/".join(img_fpath.split("/")[-2:])
-        assert len(img_rel_fpath) <= MAX_IMG_RELPATH_LEN
-        img_rel_fpath = img_rel_fpath.ljust(MAX_IMG_RELPATH_LEN, " ")
+        lidar_rel_fpath = "/".join(lidar_fpath.split("/")[-2:])
+        assert len(lidar_rel_fpath) <= MAX_IMG_RELPATH_LEN
+        lidar_rel_fpath = lidar_rel_fpath.ljust(MAX_IMG_RELPATH_LEN, " ")
         raw_index.append((
-            img_rel_fpath, img_time, shutter_s, seq_counter, gain_db,
+            lidar_rel_fpath, lidar_time, min_time, max_time, mean_time, p50_time, npts,
             cp_present, cp_valid, cp_time_s, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw,
             mrp_present, mrp_valid, mrp_time_s, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw,
             # No MRP === No UTM
             mrp_present, mrp_present, utm_x, utm_y, utm_z))
 
-    index = np.array(raw_index, dtype=CAM_INDEX_V0_0_DTYPE)
+    index = np.array(raw_index, dtype=LIDAR_INDEX_V0_0_DTYPE)
 
     cp_p = index["cp_present"]
     print("CP total:", len(cp_p))
@@ -456,4 +510,5 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
     mrp_p = index["mrp_present"]
     print("MRP total:", len(mrp_p))
     print("MRP valid:", sum(mrp_p))
+
     return index
