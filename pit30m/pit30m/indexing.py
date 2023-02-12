@@ -1,25 +1,64 @@
 """Utility functions for timing, data association, and indexing."""
 
 import multiprocessing as mp
+import os
 from urllib.parse import urlparse
 
+import lz4
 import fsspec
 import numpy as np
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, Memory
 
-from pit30m.fs_util import cached_glob_images
+from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
 
-MAX_IMG_RELPATH_LEN = 22 # = len("0090/000000.night.webp")
-# 1M images in a log would mean 100k seconds = A 27h nonstop log.
+# 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
+MAX_IMG_RELPATH_LEN = 22        # = len("0090/000000.night.webp")
+MAX_LIDAR_RELPATH_LEN = 14      # = len("007959.npz.lz4")
+
+memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 # Please refer to the NumPy documentation for exact details on type dimensions.
 # https://numpy.org/doc/stable/reference/arrays.dtypes.html
-INDEX_V0_0_DTYPE = np.dtype([
+CAM_INDEX_V0_0_DTYPE = np.dtype([
+    # TODO-LOW(andrei): Index a number and day/night to save space.
     ("rel_path", str, MAX_IMG_RELPATH_LEN),
     ("img_time", np.double),
     ("shutter_s", np.double),
     ("seq_counter", np.int64),
     ("gain_db", np.double),
+    ("cp_present", bool),
+    ("cp_valid", bool),
+    ("cp_time_s", np.double),
+    ("cp_x", np.double),
+    ("cp_y", np.double),
+    ("cp_z", np.double),
+    ("cp_roll", np.double),
+    ("cp_pitch", np.double),
+    ("cp_yaw", np.double),
+    ("mrp_present", bool),
+    ("mrp_valid", bool),
+    ("mrp_time", np.double),
+    ("mrp_submap_id", bytes, 16),
+    ("mrp_x", np.double),
+    ("mrp_y", np.double),
+    ("mrp_z", np.double),
+    ("mrp_roll", np.double),
+    ("mrp_pitch", np.double),
+    ("mrp_yaw", np.double),
+    # UTM coordinates are provided for CONVENIENCE, computed from MRP based on the v0 (unrefined)
+    # submap UTM coordinates. Ideally you'll eventually want to use the 'Map' class and compute your
+    # own UTMs once Andrei B. manages to release refined submap UTMs.
+    ("utm_present", bool),
+    ("utm_valid", bool),
+    ("utm_x", np.double), # Easting
+    ("utm_y", np.double), # Northing
+    ("utm_z", np.double), # TODO(andrei): Make sure you populate UTM Z (altitude) eventually
+])
+
+LIDAR_INDEX_V0_0_DTYPE = np.dtype([
+    ("rel_path", str, MAX_LIDAR_RELPATH_LEN),
+    ("lidar_min_time", np.double),
+    ("lidar_max_time", np.double),
     ("cp_present", bool),
     ("cp_valid", bool),
     ("cp_time_s", np.double),
@@ -73,6 +112,63 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
         )
         return img_uri, entry
 
+@memory.cache(verbose=1)
+def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
+    """Returns LiDAR timing metadata."""
+    # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
+    with fsspec.open(lidar_uri) as compressed_f:
+        with lz4.frame.open(compressed_f, "rb") as f:
+            lidar_data = np.load(f)
+            point_times = lidar_data["seconds"]
+
+            if lidar_data["points"].ndim != 2 or lidar_data["points"].shape[-1] != 3:
+                return (
+                    "Error",
+                    lidar_uri,
+                    "unexpected-points-shape",
+                    "{}".format(lidar_data["points"].shape),
+                )
+            if lidar_data["points"].dtype != np.float32:
+                return "Error", lidar_uri, "unexpected-points-dtype", str(lidar_data["points"].dtype)
+            if lidar_data["points_H_sensor"].ndim != 2 or lidar_data["points_H_sensor"].shape[-1] != 3:
+                return (
+                    "Error",
+                    lidar_uri,
+                    "unexpected-points_H_sensor-shape",
+                    str(lidar_data["points_H_sensor"].shape),
+                )
+            if lidar_data["points_H_sensor"].dtype != np.float32:
+                return (
+                    "Error",
+                    lidar_uri,
+                    "unexpected-points_H_sensor-dtype",
+                    str(lidar_data["points_H_sensor"].dtype),
+                )
+            if len(lidar_data["intensity"]) != len(lidar_data["points"]):
+                return (
+                    "Error",
+                    lidar_uri,
+                    "unexpected-intensity-shape",
+                    "{} vs. {} points".format(lidar_data["intensity"].shape, lidar_data["points"].shape),
+                )
+            if len(lidar_data["seconds"]) != len(lidar_data["points"]):
+                return (
+                    "Error",
+                    lidar_uri,
+                    "unexpected-point-time-shape",
+                    "{} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape),
+                )
+
+            return (
+                "OK",
+                lidar_uri,
+                point_times.min(),
+                point_times.max(),
+                point_times.mean(),
+                np.median(point_times),
+                lidar_data["points"].shape,
+            )
+
 
 def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_delta_s: float = 0.5) -> np.ndarray:
     """Associates timestamps from two arrays, returning the indices of the closest matches.
@@ -125,7 +221,7 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
     return result
 
 
-def build_index(in_root, log_reader, cam_dir, _logger):
+def build_camera_index(in_root, log_reader, cam_dir, _logger):
     """Internal function to build an index for a sensor in a log."""
     _logger.info("Reading continuous pose data")
     cp_dense = log_reader.continuous_pose_dense
@@ -236,7 +332,122 @@ def build_index(in_root, log_reader, cam_dir, _logger):
             # No MRP === No UTM
             mrp_present, mrp_present, utm_x, utm_y, utm_z))
 
-    index = np.array(raw_index, dtype=INDEX_V0_0_DTYPE)
+    index = np.array(raw_index, dtype=CAM_INDEX_V0_0_DTYPE)
+
+    cp_p = index["cp_present"]
+    print("CP total:", len(cp_p))
+    print("CP valid:", sum(cp_p))
+
+    mrp_p = index["mrp_present"]
+    print("MRP total:", len(mrp_p))
+    print("MRP valid:", sum(mrp_p))
+    return index
+
+
+def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
+    """Internal function to build an index for a LiDAR in a log."""
+    _logger.info("Reading continuous pose data")
+    cp_dense = log_reader.continuous_pose_dense
+    cp_times = np.array(cp_dense[:, 0])
+    in_scheme = urlparse(in_root).scheme
+    in_fs = fsspec.filesystem(in_scheme)
+
+    _logger.info("Reading UTM and MRP")
+    # Note that UTM is inferred from MRP via (very much imperfect) submap UTMs
+    utm_poses = log_reader.utm_poses_dense
+    mrp_poses = log_reader.map_relative_poses_dense
+    assert len(mrp_poses) == len(utm_poses)
+    mrp_times = np.array(mrp_poses["time"])
+
+    _logger.info("Listing all LiDAR sweeps from %s", lidar_dir)
+    lidar_sweep_uris = cached_glob_lidar_sweeps(lidar_dir, in_fs)
+    _logger.info("There are %d LiDARs in %s", len(lidar_sweep_uris), lidar_dir)
+
+    h = len(lidar_sweep_uris) / 10.0 / 3600.0
+    print(f"{h:.2f} hours of driving")
+
+    pool = Parallel(n_jobs=mp.cpu_count() * 4, verbose=1, batch_size=8)
+    _logger.info("Fetching metadata...")
+    all_lidar_meta_info = pool(delayed(fetch_metadata_for_lidar)(x) for x in lidar_sweep_uris)
+    _logger.info("Fetched %d results", len(all_lidar_meta_info))
+
+    errors = [x for x in all_lidar_meta_info if x[0] != "OK"]
+    print(f"Found {len(errors)} errors")
+
+
+    raise RuntimeError("So far so good")
+
+    image_times = np.array([float(entry[1][0]) for entry in res])
+    _logger.info("Associating...")
+    _logger.info("%s %s %s %s", image_times.dtype, str(image_times.shape),
+                str(image_times[0]) if len(image_times) else "n/A",
+                str(type(image_times[0])) if len(image_times) else "n/A")
+    _logger.info("%s %s %s %s", mrp_times.dtype, str(mrp_times.shape),
+                str(mrp_times[0]), str(type(mrp_times[0])))
+    assert np.all(mrp_times[1:] > mrp_times[:-1])
+
+    utm_and_mrp_index = associate(image_times, mrp_times, max_delta_s=-1.0)
+    _logger.info("Associating complete.")
+    matched_timestamps_mrp = mrp_times[utm_and_mrp_index]
+    deltas_mrp = np.abs(matched_timestamps_mrp - image_times)
+
+    _logger.info("Associating CP...")
+    cp_index = associate(image_times, cp_times, max_delta_s=-1.0)
+    _logger.info("Associating complete.")
+    matched_timestamps_cp = cp_times[cp_index]
+    deltas_cp = np.abs(matched_timestamps_cp - image_times)
+
+    unindexed_frames = []
+    status = []
+    raw_index = []
+    for row_idx, ((img_fpath, img_data), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in enumerate(zip(
+        res, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp
+    )):
+        img_time, shutter_s, seq_counter, gain_db = img_data
+        if delta_mrp_s > 0.10:
+            mrp = None
+            mrp_present = False
+            mrp_valid = False
+            mrp_time_s, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            mrp_submap_id = b'\x00' * 16
+            utm = None
+            utm_x, utm_y, utm_z = 0.0, 0.0, 0.0
+        else:
+            mrp = mrp_poses[pose_idx, ...].tolist()
+            utm = utm_poses[pose_idx, ...].tolist()
+            mrp_present = True
+            mrp_time_s, mrp_valid, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = mrp
+            utm_x, utm_y = utm
+            # TODO(andrei): Update me
+            utm_z = 0
+
+            # Handle submap IDs which were truncated upon encoded due to ending with a zero.
+            mrp_submap_id = mrp_submap_id.ljust(16, b"\x00")
+            assert type(mrp_submap_id) == bytes
+            assert 16 == len(mrp_submap_id)
+
+
+        if delta_cp_s > 0.10:
+            cp_present = False
+            cp_valid = False
+            cp_time_s, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        else:
+            cp = cp_dense[cp_idx, ...]
+            cp_present = True
+            (cp_time_s, cp_valid, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw) = cp
+            cp_valid = bool(cp_valid)
+
+        img_rel_fpath = "/".join(img_fpath.split("/")[-2:])
+        assert len(img_rel_fpath) <= MAX_IMG_RELPATH_LEN
+        img_rel_fpath = img_rel_fpath.ljust(MAX_IMG_RELPATH_LEN, " ")
+        raw_index.append((
+            img_rel_fpath, img_time, shutter_s, seq_counter, gain_db,
+            cp_present, cp_valid, cp_time_s, cp_x, cp_y, cp_z, cp_roll, cp_pitch, cp_yaw,
+            mrp_present, mrp_valid, mrp_time_s, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw,
+            # No MRP === No UTM
+            mrp_present, mrp_present, utm_x, utm_y, utm_z))
+
+    index = np.array(raw_index, dtype=CAM_INDEX_V0_0_DTYPE)
 
     cp_p = index["cp_present"]
     print("CP total:", len(cp_p))

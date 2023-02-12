@@ -25,9 +25,10 @@ from typing import Optional, List, Tuple, Union
 from urllib.parse import urlparse, urljoin
 
 from pit30m.camera import CamName
-from pit30m.data.log_reader import LogReader
+from pit30m.data.log_reader import LogReader, VELODYNE_NAME
 from pit30m.data.submap import Map
-from pit30m.indexing import associate, build_index
+from pit30m.indexing import build_camera_index, build_lidar_index
+from pit30m.util import print_list_with_limit
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
@@ -236,6 +237,7 @@ class MonkeyWrench:
                                 check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
                                 check its shape too, etc.
         """
+        # XXX(andrei): This function is deprecated.
         self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         res = self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
@@ -245,10 +247,10 @@ class MonkeyWrench:
 
         print("Log indexing complete.")
 
-    def merge_indexes(self, log_ids: List[str]):
-        """Given a list of log IDs with indexed data, merge the indexes into a single index."""
-        # TODO(andrei): Implement this.
-        ...
+    # def merge_indexes(self, log_ids: List[str]):
+    #     """Given a list of log IDs with indexed data, merge the indexes into a single index."""
+    #     # TODO(andrei): Implement this.
+    #     ...
 
     def get_lidar_dir(self, log_root: str, lidar_name: str) -> str:
         return os.path.join(log_root, "lidars", lidar_name.lstrip("/"))
@@ -256,9 +258,9 @@ class MonkeyWrench:
     def get_cam_dir(self, log_root: str, cam_name: str) -> str:
         return os.path.join(log_root, "cameras", cam_name.lstrip("/"))
 
-    def next_to_validate(self, max: int = 10):
-        """Next logs to validate."""
-        pass
+    # def next_to_validate(self, max: int = 10):
+    #     """Next logs to validate."""
+    #     pass
 
     def stat(self, max: int = 100, quiet: bool = False):
         all_logs = self.all_logs[:max]
@@ -288,16 +290,8 @@ class MonkeyWrench:
             start:      The index of the first log to analyze.
             max:        The index of the last log to analyze (exclusive).
             min_img:    The minimum number of images a sensor must have to count as "present".
+            out_root:   Write detailed information to this directory.
         """
-        # TODO(andrei): Missing cameras.
-        #   - % of logs with at least one missing camera.
-        #   - % of logs with middle front wide
-        #   - % of logs with stereo
-        #   - % of logs with all cameras present
-        #   - % of logs with all non-stereo cameras present
-        # TODO(andrei): Similar analysis for MISMATCHED cameras (say more than 20% difference
-        # in camera counts between cameras)
-
         all_logs = self.all_logs[start:max]
         pool = Parallel(n_jobs=mp.cpu_count() * 2, verbose=10)
         results = pool(delayed(stat_sensors_for_log)(self._root, log) for log in all_logs)
@@ -406,7 +400,7 @@ class MonkeyWrench:
                 break
 
         for log_id in to_index:
-            # XXX(andrei): Iron out this command.
+            # TODO(andrei): Iron out this command.
             print(f"python monkeywrench.py index_all_cameras {log_id} --root s3://pit30m/")
 
     def next_to_etl(self, max: int = 10, include_attempted_but_incomplete: bool = False, kind: str = "gpu",
@@ -606,7 +600,7 @@ class MonkeyWrench:
 
         self._logger.info("Will build index... reindex = %s, exists_npy = %s, exists_npz = %s", str(reindex),
                     str(exists_npy), str(exists_npz))
-        index = build_index(self._root, log_reader, cam_dir, self._logger)
+        index = build_camera_index(self._root, log_reader, cam_dir, self._logger)
 
         # For a rather hefty log (1h20) a v0 index would be ~17MiB uncompressed per camera.
         #
@@ -618,14 +612,53 @@ class MonkeyWrench:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote index(es) to: {out_index_fpath}")
 
-                # error = f"WARNING: {img_time = } does not have a valid pose in this log [{delta_s = }]"
-        #         status.append((img_fpath, img_time, "unmatched_pose", str(delta_s)))
-        #         unindexed_frames.append(img_fpath)
-        #         index.append((img_fpath, img_data, False, None, None))
-        #     else:
-        #         imgs_with_pose.append((utm_poses[pose_idx, :], mrp_poses[pose_idx], img_fpath, img_data))
-        #         index.append((img_fpath, img_data, True, utm_poses[pose_idx, :], mrp_poses[pose_idx]))z`
+    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 0):
+        return self.index_lidar(self.all_logs[log_index], reindex=reindex, index_version=index_version,
+                                out_index_dir="/tmp/my_index/")
 
+    def index_lidar(
+        self,
+        log_id: str,
+        lidar_name: str = VELODYNE_NAME,
+        out_index_dir: Optional[str] = None,
+        reindex: bool = False,
+        index_version: int = 0,
+    ):
+        assert index_version == 0, "v0 is the only currently supported DTYPE"
+        map = self.map
+
+        self._logger.info("Setting up log reader to process LiDAR %s", lidar_name)
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        log_reader = LogReader(log_root_uri=log_root, map=map)
+        lidar_dir = self.get_lidar_dir(log_root, lidar_name)
+
+        if out_index_dir is None:
+            out_index_dir = os.path.join(lidar_dir, "index")
+
+        out_scheme = urlparse(out_index_dir).scheme
+        out_fs = fsspec.filesystem(out_scheme)
+
+        out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version}.npy")
+        out_index_fpath_npz = out_index_fpath.replace(".npy", ".npz")
+
+        self._logger.info("Checking if LiDAR index %s is there... (incl npz version)", out_index_fpath)
+        exists_npy = out_fs.exists(out_index_fpath)
+        exists_npz = out_fs.exists(out_index_fpath_npz)
+        exists = exists_npy and exists_npz
+        if exists and not reindex:
+            self._logger.info("LiDAR index already exists at %s and %s", out_index_fpath, out_index_fpath_npz)
+            return
+
+        self._logger.info("Will build index... reindex = %s, exists_npy = %s, exists_npz = %s", str(reindex),
+                    str(exists_npy), str(exists_npz))
+        index = build_lidar_index(self._root, log_reader, lidar_dir, self._logger)
+
+        out_fs.makedirs(out_index_dir, exist_ok=True)
+        with out_fs.open(out_index_fpath, "wb") as out_f:
+            np.save(out_f, index)
+        with out_fs.open(out_index_fpath_npz, "wb") as out_f:
+            np.savez_compressed(out_f, index=index)
+        print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
 
 
     def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
@@ -1078,12 +1111,6 @@ class MonkeyWrench:
                 if subentry.endswith(".webp"):
                     print(subentry)
                     break
-
-def print_list_with_limit(lst, limit: int) -> None:
-    for entry in lst[:limit]:
-        print(f"\t - {entry}")
-    if len(lst) > limit:
-        print(f"\t - ... and {len(lst) - limit} more.")
 
 
 # Trick to bypass !binary parts of YAML files before we can support them. (They are low priority and not

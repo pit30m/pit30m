@@ -22,10 +22,6 @@ from PIL import Image
 from pit30m.camera import CAM_NAMES
 
 
-# Opposite of zip
-def unzip(l):
-    return list(zip(*l))
-
 class Pit30MCLI:
     def __init__(self):
         self._read_pool = Parallel(n_jobs=mp.cpu_count())
@@ -80,6 +76,11 @@ class Pit30MCLI:
                 shlex.split(f"ffmpeg -i {' -i '.join(video_fpaths)} -filter_complex hstack=inputs={len(video_fpaths)} " \
                     f"{out_dir}/{log_uri}-sample-multicam.mp4")
             )
+
+
+# Opposite of zip
+def unzip(l):
+    return list(zip(*l))
 
 
 if __name__ == "__main__":
