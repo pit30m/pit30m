@@ -530,6 +530,9 @@ class MonkeyWrench:
 
     def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 0):
         log_id = self.all_logs[idx]
+        print("=" * 80)
+        print(f"Indexing log {log_id} ({idx + 1} / {len(self.all_logs)})")
+        print("=" * 80)
         self.index_all_cameras(log_id, reindex=reindex, index_version=index_version)
 
     def index_all_cameras(
