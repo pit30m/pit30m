@@ -115,30 +115,6 @@ def demo_dataloader(
         if (batch_idx + 1) >= max_batches:
             break
 
-    # Naive but functional validation code currently
-    """
-    counter = defaultdict(int)
-    idxs = defaultdict(set)
-    for batch_idx, (lids, batch_idxs) in enumerate(loader):
-        # print(len(batch))
-        for el, idx_in_log in zip(lids, batch_idxs):
-            # print(idx_in_log)
-            counter[el] += 1
-            if idx_in_log.item() in idxs[el]:
-                print("Duplicate!")
-            idxs[el].add(idx_in_log.item())
-
-        # if (batch_idx + 1) >= max_batches:
-        #     break
-
-    for k, v in counter.items():
-        print(k, v)
-
-    print()
-    for log_id, idx in dataset._indexes:
-        print(log_id, len(idx))
-
-    """
     dt_s = time.time() - start_time
     n_images = batch_size * max_batches
     print(f"Loaded {n_images} images in {dt_s:.2f} s, {n_images / dt_s:.2f} images/s.")

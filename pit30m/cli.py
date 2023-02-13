@@ -1,40 +1,44 @@
-
-import shutil
-import fire
-import shlex
-from typing import Tuple
-from lzma import LZMAError
-
-import numpy as np
-import json
-import open3d as o3d
-import subprocess
-import fsspec
-from urllib.parse import urlparse
-import tempfile
-import ipdb
-import lzma
-from tqdm import tqdm
 import multiprocessing as mp
+import os
+import shlex
+import shutil
+import subprocess
+import tempfile
+from lzma import LZMAError
+from typing import Tuple, Union
+from urllib.parse import urlparse
+
+import fire
+import fsspec
+import ipdb
+import numpy as np
+import open3d as o3d
 from joblib import Parallel, delayed
 from PIL import Image
-
-from pit30m.camera import CAM_NAMES
+from tqdm import tqdm
 
 
 class Pit30MCLI:
     def __init__(self):
-        self._read_pool = Parallel(n_jobs=mp.cpu_count())
+        self._read_pool = Parallel(n_jobs=mp.cpu_count() * 4)
         pass
 
     def woof(self):
         print("bow wow")
 
-    def multicam_demo(self, dataset_base: str, log_uri: str, out_dir: str) -> None:
+    def multicam_demo(self, dataset_base: str, log_uri: str, out_dir: str, chunks: Union[int, tuple[int]]=(16,17)) -> None:
+        """Bakes a multicam video from a log URI. Requires `ffmpeg` to be installed.
+
+        chunks = 100-image chunks of log to include
+
+        TODO(andrei): Port to use the log reader.
+        """
         in_fs = fsspec.filesystem(urlparse(dataset_base).scheme)
         out_fs = fsspec.filesystem(urlparse(out_dir).scheme)
+        if isinstance(chunks, int):
+            chunks = (chunks)
 
-        # Clockwise camera names, with the front wide in the middle
+        # Clockwise wide camera names, with the front wide in the middle
         cams_clockwise = [
             "hdcam_08_port_rear_roof_wide",
             "hdcam_10_port_front_roof_wide",
@@ -47,12 +51,12 @@ class Pit30MCLI:
         with tempfile.TemporaryDirectory() as tmp_dir:
             for cam in cams_clockwise:
                 ld = dataset_base + log_uri + "/cameras/" + cam
-                chunks = sorted(in_fs.ls(ld))
 
                 sample_img_uris = [
-                    s_uri
-                    for s_uri in in_fs.ls(chunks[17]) + in_fs.ls(chunks[18])
-                    if s_uri.endswith("webp")
+                    entry
+                    for chunk in chunks
+                    for entry in in_fs.ls(os.path.join(ld, f"{chunk:04d}"))
+                    if entry.endswith("webp")
                 ]
 
                 def copy_img(img_uri, out_dir):
