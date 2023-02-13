@@ -111,7 +111,7 @@ def demo_dataloader(
         drop_last=False,
     )
     start_time = time.time()
-    for batch_idx, (image, pose_6dof) in enumerate(loader):
+    for batch_idx, (image, metadata, pose_6dof) in enumerate(loader):
         print(f"Batch {batch_idx + 1} of {len(loader)}; image shape: {image.shape}")
         if (batch_idx + 1) >= max_batches:
             break

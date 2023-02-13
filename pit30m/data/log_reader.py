@@ -280,7 +280,7 @@ class LogReader:
         # high latency data loading, so we will need to rewrite parts of the dataloader to perform true async reading
         # separate from the dataloader parallelism.
         with fsspec.open(fpath, "rb") as f:
-            image_np = np.asarray(Image.open(f))
+            image_np = np.array(Image.open(f))
             return CameraImage(
                 image=image_np,
                 cam_name=cam_name.value,
