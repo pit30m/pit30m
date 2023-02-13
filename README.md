@@ -14,7 +14,7 @@ the first to hear of any updates!
 ## Getting Started
 
 To preview some example very early stage data, check out the [tutorial notebook](examples/tutorial_00_introduction.ipynb).
-[![Open In Studio Lab](https://studiolab.sagemaker.aws/studiolab.svg)](https://studiolab.sagemaker.aws/import/github/pit30m/pit30m/blob/main/pit30m/examples/tutorial_00_introduction.ipynb)
+[![Open In Studio Lab](https://studiolab.sagemaker.aws/studiolab.svg)](https://studiolab.sagemaker.aws/import/github/pit30m/pit30m/blob/main/examples/blogpost_00_compression.ipynb)
 
 More tutorials coming soon.
 
