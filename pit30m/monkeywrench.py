@@ -1,31 +1,32 @@
 """Internal tooling for data management, validation, and indexing."""
 
-import os
-import ipdb
 import csv
 import json
-from dataclasses import dataclass
-import multiprocessing as mp
 import logging
-from functools import cached_property
+import lzma
+import multiprocessing as mp
+import os
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-import numpy as np
-import lz4
+from functools import cached_property
+from lzma import LZMAError
+from typing import List, Optional, Tuple, Union
+from urllib.parse import urljoin, urlparse
+
 import fire
 import fsspec
+import ipdb
+import lz4
+import numpy as np
 import yaml
+from joblib import Memory, Parallel, delayed
 from PIL import Image
-import lzma
-from lzma import LZMAError
 from tqdm import tqdm
-from joblib import Parallel, delayed, Memory
-from typing import Optional, List, Tuple, Union
-from urllib.parse import urlparse, urljoin
 
 from pit30m.camera import CamName
-from pit30m.data.log_reader import LogReader, VELODYNE_NAME
+from pit30m.data.log_reader import VELODYNE_NAME, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import build_camera_index, build_lidar_index
 from pit30m.util import print_list_with_limit
@@ -89,9 +90,10 @@ class LogStatus(Enum):
     ONLY_CPU_DONE = "only_cpu_done"
 
 
-def query_log_status(root, log_id) -> LogStatus:
+def query_log_status(root, log_id: str) -> LogStatus:
+    log_id = log_id.strip().strip("/")
     out_fs = fsspec.filesystem(urlparse(root).scheme)
-    out_log_root = os.path.join(root, log_id.lstrip("/"))
+    out_log_root = os.path.join(root, log_id)
     if not out_fs.exists(out_log_root):
         return LogStatus.NOT_ATTEMPTED
     # elif out_fs.exists(os.path.join(out_log_root, DEFAULT_INDEX_FNAME)):
@@ -122,8 +124,9 @@ def query_log_status(root, log_id) -> LogStatus:
 
 
 def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
+    log_id = log_id.strip().strip("/")
     fs = fsspec.filesystem(urlparse(root).scheme)
-    log_root = os.path.join(root, log_id.lstrip("/"))
+    log_root = os.path.join(root, log_id)
     if not fs.exists(log_root):
         # n/A for a non-attempted log
         return None
@@ -278,10 +281,14 @@ class MonkeyWrench:
         print("=" * 80)
 
     def stat_log(self, log_id: str) -> None:
-        print(log_id)
+        log_id = log_id.strip().strip("/")
+        print("=" * 80)
+        print(f"Log ID: {log_id}")
         print(query_log_status(self._root, log_id))
         print("=" * 80)
-        print(stat_sensors_for_log(self._root, log_id))
+        for sensor, count in stat_sensors_for_log(self._root, log_id).items():
+            print(f"{sensor.value + ':':<40} {count: 6d}")
+        print("=" * 80)
 
     def stat_sensors(self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp"):
         """Gets statistics over the sensors in the dataset.

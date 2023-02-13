@@ -1,20 +1,15 @@
 import os
 import time
-from collections import defaultdict
-from typing import Optional, Sequence, Union
+from typing import Sequence, Union
 from uuid import UUID
 
 import fire
 import numpy as np
-import torch
 import torch.multiprocessing as mp
-
-# import torchdata.datapipes as dp
-from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from pit30m.camera import CamName
-from pit30m.data.log_reader import LogReader
+from pit30m.data.log_reader import CameraImage, LiDARFrame, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 
@@ -23,7 +18,8 @@ class Pit30MLogDataset(Dataset):
     def __init__(self, root_uri: str, log_ids: Sequence[str], submap_utm_uri: str) -> None:
         """A low-level interface dataset for Pit30M operating on a per-log basis.
 
-        Very slow due to limitations in PyTorch, please see [@svogor2022profiling] for a related analysis.
+        Somewhat inefficient due to limitations in PyTorch when it comes to high-throughput high-latency data sources,
+        please see [@svogor2022profiling] for a related analysis.
 
         References:
             - [@svogor2022profiling]: https://arxiv.org/abs/2211.04908
@@ -35,7 +31,7 @@ class Pit30MLogDataset(Dataset):
             log_id: LogReader(os.path.join(root_uri, str(log_id)), map=self._map) for log_id in log_ids
         }
 
-        print("Loading indexes...")
+        print(f"Loading {len(log_ids)} indexes...")
         self._indexes = [
             (log_id, reader.get_cam_geo_index(cam_name=CamName.MIDDLE_FRONT_WIDE))
             for log_id, reader in self._log_readers.items()
@@ -59,7 +55,7 @@ class Pit30MLogDataset(Dataset):
         # Refer to the dtype definition for more information on what is available.
         cur_sample: CAM_INDEX_V0_0_DTYPE = cur_index[idx_in_log]
 
-        image = self._log_readers[cur_log_id].get_image(cur_sample["rel_path"].strip())
+        image: CameraImage = self._log_readers[cur_log_id].get_image(self._cam_name, idx_in_log)
 
         image_metadata = (
             cur_sample["mrp_present"],

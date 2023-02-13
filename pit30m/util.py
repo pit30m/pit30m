@@ -1,10 +1,17 @@
 from itertools import zip_longest
 
-def print_list_with_limit(lst, limit: int) -> None:
+
+def print_list_with_limit(lst, limit: int, logger = None) -> None:
+    out = ""
     for entry in lst[:limit]:
-        print(f"\t - {entry}")
+        out += f"\t - {entry}\n"
     if len(lst) > limit:
-        print(f"\t - ... and {len(lst) - limit} more.")
+        out += f"\t - ... and {len(lst) - limit} more."
+
+    if logger is None:
+        print(out)
+    else:
+        logger.info("%s", out)
 
 
 

@@ -1,26 +1,28 @@
 import csv
-import lz4
+import os
 import time
 from dataclasses import dataclass
-import ipdb
-import os
 from functools import cached_property, lru_cache
 from urllib.parse import urlparse
-import pandas as pd
-import numpy as np
 from uuid import UUID
+
 import fsspec
+import ipdb
+import lz4
+import numpy as np
+import pandas as pd
 from PIL import Image
 
 from pit30m.camera import CamName
 from pit30m.data.submap import Map
 
+
 @dataclass
 class CameraImage:
     # TODO consider replacing the cam with a Camera object which can be used to get the intrinsics and stuff
+    image: np.ndarray
     cam_name: str
     capture_timestamp: float
-    img: np.ndarray
     shutter_time_s: float
     gain_db: float
 
@@ -58,8 +60,6 @@ class LogReader:
 
         Specifically, using abstractions like pytorch DataLoaders can dramatically improve throughput, e.g., going from
         20-30 images per second to 100+.
-
-        XXX(andrei): Document how indexes may have space-padded names to avoid having people pull their hair out!
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
@@ -92,6 +92,11 @@ class LogReader:
 
     @lru_cache(maxsize=16)
     def get_lidar_geo_index(self):
+        """Returns a lidar index of dtype LIDAR_INDEX_V0_0_DTYPE.
+
+        WARNING: 'rel_path' entries in indexes may be padded with spaces on the right since they are fixed-width
+        strings. If you need to use them directly, make sure you use `.strip()` to remove the spaces.
+        """
         index_fpath = os.path.join(self.lidar_root, "index", "wgs84.csv")
         fs = fsspec.filesystem(urlparse(index_fpath).scheme)
         if not fs.exists(index_fpath):
@@ -128,8 +133,7 @@ class LogReader:
             data["ALIGNED_WITH_VEHICLE_Z"]
             data["MONOCULAR_RECTIFIED"]
             data["MONOCULAR_UNRECTIFIED"]
-            # import ipdb; ipdb.set_trace()
-            # print()
+            #
             return data
 
     def stereo_calib(self):
@@ -163,7 +167,7 @@ class LogReader:
         evaluation, since you will have a continuous pose trajectory.
         """
         pose_data = []
-        # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
+        # TODO(andrei): Document the timestamps carefully.
         for pose in self.raw_pose_data:
             pose_data.append((pose["capture_time"],
                             pose["poses_and_differentials_valid"],
@@ -195,7 +199,7 @@ class LogReader:
         # The data also has pose and velocity covariance information, but I have never used directly so I don't know
         # if it's well-calibrated.
         pose_data = []
-        # XXX(andrei): Document the timestamps carefully. Remember that GPS time can be confusing!
+        # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
             # TODO(andrei): Custom, interpretable dtype!
             pose_data.append((
@@ -266,72 +270,50 @@ class LogReader:
         wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
         return wgs84_data
 
-    # def get_image(self, cam_name: CamName, timestamp: float):
-    #     """Returns the image for the given camera and timestamp."""
-    #     # NOTE(andrei): For dataloader.
+    def get_image(self, cam_name: CamName, idx: int) -> CameraImage:
+        """Loads a camera image by index in log, used in torch data loading."""
+        index_entry = self.get_cam_geo_index(cam_name)[idx]
+        rel_path = index_entry["rel_path"]
+        fpath = os.path.join(self.get_cam_root(cam_name), rel_path)
 
-    def get_image(self, rel_path: str):
-        # import boto3 # messes up credentials
-        # client = boto3.client("s3")
-
-        start = time.time()
-        fpath = os.path.join(self.get_cam_root(CamName.MIDDLE_FRONT_WIDE), rel_path)
-        # fpath = "/mnt/data/pit30m/out/sample_out_v6/0209f084-2efb-4acf-f2ce-e8f8a58c8b06/cameras/hdcam_12_middle_front_roof_wide/0052/005200.day.webp"
-        # ~35-40ms to open a LOCAL webp image
-        # 120-200ms to open an S3 webp image
-        # Slow AF
+        # NOTE(andrei): ~35-40ms to open a LOCAL webp image, 120-200ms to open an S3 webp image. PyTorch does not like
+        # high latency data loading, so we will need to rewrite parts of the dataloader to perform true async reading
+        # separate from the dataloader parallelism.
         with fsspec.open(fpath, "rb") as f:
-            arr = np.asarray(Image.open(f))
-        # arr = np.asarray(Image.open(fpath))
-
-        # Open the image as a stream with boto
-        # print(fpath)
-        # prefix = fpath.split("pit30m/")[-1]
-        # response = client.get_object(Bucket="pit30m", Key=prefix)
-
-
-        dt = time.time() - start
-        # print(f"get_image took {dt*1000.0:.1f}ms")
-        # return np.zeros((100, 100, 3))
-        return arr
-
-    def get_lidar(self, timestamp: float):
-        """Returns the LiDAR scan for the given timestamp."""
-        # NOTE(andrei): For dataloader.
-        pass
-
-    def lidar_iterator(self):
-        index = self.get_lidar_geo_index()
-        for row in index.itertuples():
-            lidar_fpath = os.path.join(self.lidar_root, row.lidar_fpath)
-            with fsspec.open(lidar_fpath, "rb") as compressed_f:
-                with lz4.frame.open(compressed_f, "rb") as f:
-                    npf = np.load(f)
-                    yield LiDARFrame(
-                        # TODO add remaining fields like raw power, etc.
-                        xyz_continuous=npf["points"],
-                        xyz_sensor=npf["points_H_sensor"],
-                        intensity=npf["intensity"],
-                        point_times=npf["seconds"],
-                    )
-
-    # def raw_camera_iterator(self, cam_name: CamName):
-    #     pass
-
-    def camera_iterator(self, cam_name: CamName):
-        """Iterator over camera images with metadata"""
-        # TODO(andrei): requires an index to have been built.
-        index = self.get_cam_geo_index(cam_name)
-        cam_root = self.get_cam_root(cam_name)
-        for row in index.itertuples():
-            img_fpath = os.path.join(cam_root, row.img_fpath_in_cam)
-            with fsspec.open(img_fpath, "rb") as f:
-                img = Image.open(f)
-
-            yield CameraImage(
-                cam_name=cam_name,
-                capture_timestamp=row.capture_seconds,
-                img=np.asarray(img),
-                gain_db=row.gain_db,
-                shutter_time_s=row.shutter_seconds,
+            image_np = np.asarray(Image.open(f))
+            return CameraImage(
+                image=image_np,
+                cam_name=cam_name.value,
+                capture_timestamp=index_entry["img_time"],
+                gain_db=index_entry["gain_db"],
+                shutter_time_s=index_entry["shutter_s"],
             )
+
+    def get_lidar(self, rel_path: str) -> LiDARFrame:
+        """Loads the LiDAR scan for the given relative path, used in torch data loading."""
+        fpath = os.path.join(self.get_cam_root(CamName.MIDDLE_FRONT_WIDE), rel_path)
+        with fsspec.open(fpath, "rb") as f_compressed:
+            with lz4.frame.open(f_compressed, "rb") as f:
+                npf = np.load(f)
+                return LiDARFrame(
+                    xyz_continuous=npf["points"],
+                    xyz_sensor=npf["points_H_sensor"],
+                    intensity=npf["intensity"],
+                    point_times=npf["seconds"],
+                )
+
+    # def lidar_iterator(self):
+    #     index = self.get_lidar_geo_index()
+    #     for row in index.itertuples():
+    #         lidar_fpath = os.path.join(self.lidar_root, row.lidar_fpath)
+    #         with fsspec.open(lidar_fpath, "rb") as compressed_f:
+    #             with lz4.frame.open(compressed_f, "rb") as f:
+    #                 npf = np.load(f)
+    #                 yield LiDARFrame(
+    #                     # TODO add remaining fields like raw power, etc.
+    #                     xyz_continuous=npf["points"],
+    #                     xyz_sensor=npf["points_H_sensor"],
+    #                     intensity=npf["intensity"],
+    #                     point_times=npf["seconds"],
+    #                 )
+

@@ -2,13 +2,13 @@
 
 import multiprocessing as mp
 import os
-import ipdb
 from urllib.parse import urlparse
 
-import lz4
 import fsspec
+import ipdb
+import lz4
 import numpy as np
-from joblib import Parallel, delayed, Memory
+from joblib import Memory, Parallel, delayed
 
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
 from pit30m.util import print_list_with_limit
@@ -395,10 +395,12 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
             dumped_timestamps = np.load(ff)["data"]["timestamp"].ravel()
 
     if len(errors) > 0:
-        print(f"Found {len(errors)} errors reading LiDAR for indexing purposes")
-        print_list_with_limit(errors, 10)
+        _logger.error("Found %d errors reading LiDAR for indexing purposes!!!", len(errors))
+        print_list_with_limit(errors, 10, logger=_logger)
         log_id = log_reader.log_id
         raise RuntimeError(f"Could not index LIDAR for log ID {log_id} due to errors (see log)")
+
+    _logger.info("No errors found reading %d LiDAR sweep files for indexing.", len(all_lidar_meta_info))
 
     # dmins = []
     # dmaxs = []
@@ -452,8 +454,7 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
     matched_timestamps_cp = cp_times[cp_index]
     deltas_cp = np.abs(matched_timestamps_cp - lidar_times)
 
-    unindexed_frames = []
-    status = []
+    # TODO(andrei): Code duplication between this and the camera index builder.
     raw_index = []
     for ((lidar_time, lidar_fpath, min_time, max_time, mean_time, p50_time, npts), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in zip(
         lidar_info, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp
