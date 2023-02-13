@@ -15,7 +15,7 @@ from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 
 
 class Pit30MLogDataset(Dataset):
-    def __init__(self, root_uri: str, log_ids: Sequence[str], submap_utm_uri: str) -> None:
+    def __init__(self, root_uri: str, log_ids: Sequence[str], submap_utm_uri: str, cam_name: CamName = CamName.MIDDLE_FRONT_WIDE) -> None:
         """A low-level interface dataset for Pit30M operating on a per-log basis.
 
         Somewhat inefficient due to limitations in PyTorch when it comes to high-throughput high-latency data sources,
@@ -30,6 +30,7 @@ class Pit30MLogDataset(Dataset):
         self._log_readers = {
             log_id: LogReader(os.path.join(root_uri, str(log_id)), map=self._map) for log_id in log_ids
         }
+        self._cam_name = cam_name
 
         print(f"Loading {len(log_ids)} indexes...")
         self._indexes = [
@@ -73,7 +74,7 @@ class Pit30MLogDataset(Dataset):
             cur_sample["mrp_yaw"],
         ]
 
-        return image, image_metadata, mrp_xyz_rpw
+        return image.image, image_metadata, mrp_xyz_rpw
 
 
 class TripletPit30MDataset(Dataset):

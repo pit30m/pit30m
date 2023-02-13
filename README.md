@@ -23,6 +23,11 @@ More tutorials coming soon.
 We provide some early stage log-based torch dataloaders. Visual-localization-specific ones are coming soon. To see an
 example on how to use one of these dataloaders, have a look at `demo_dataloader` in `torch/dataset.py`.
 
+An example command:
+
+```
+python -m pit30m.torch.dataset --root-uri s3://pit30m/ --logs 00682fa6-2183-4a0d-dcfe-bc38c448090f,021286dc-5fe5-445f-e5fa-f875f2eb3c57,1c915eda-c18a-46d5-e1ec-e4f624605ff0 --num-workers 16 --batch-size 64
+```
 
 ## Features
 
