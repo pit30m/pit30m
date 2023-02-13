@@ -54,7 +54,8 @@ class Pit30MLogDataset(Dataset):
         cur_log_id, cur_index = self._indexes[log_idx]
 
         # Refer to the dtype definition for more information on what is available.
-        cur_sample: CAM_INDEX_V0_0_DTYPE = cur_index[idx_in_log]
+        cur_sample: np.ndarray = cur_index[idx_in_log]
+        assert cur_sample.dtype == CAM_INDEX_V0_0_DTYPE
 
         image: CameraImage = self._log_readers[cur_log_id].get_image(self._cam_name, idx_in_log)
 
@@ -65,14 +66,14 @@ class Pit30MLogDataset(Dataset):
             cur_sample["img_time"],
         )
 
-        mrp_xyz_rpw = [
+        mrp_xyz_rpw = (
             cur_sample["mrp_x"],
             cur_sample["mrp_y"],
             cur_sample["mrp_z"],
             cur_sample["mrp_roll"],
             cur_sample["mrp_pitch"],
             cur_sample["mrp_yaw"],
-        ]
+        )
 
         return image.image, image_metadata, mrp_xyz_rpw
 
