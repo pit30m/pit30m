@@ -188,7 +188,7 @@ class MonkeyWrench:
         dataset_root: str = "s3://pit30m/",
         metadata_root: str = "file:///mnt/data/pit30m/",
         log_status_fpath: str = "log_status.csv",
-        log_list_fpath: str = "all_logs.txt",
+        log_list_fpath: str = os.path.join(os.path.dirname(__file__), "all_logs.txt"),
         submap_utm_fpath: str = "s3://pit30m/submap_utm.pkl",
     ) -> None:
         """Dataset administration tool for the Pit30M dataset (geo-indexing, data integrity checks, etc.)

@@ -24,6 +24,7 @@ memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 CAM_INDEX_V0_0_DTYPE = np.dtype([
     # TODO-LOW(andrei): Index a number and day/night to save space.
     ("rel_path", str, MAX_IMG_RELPATH_LEN),
+    # TODO(andrei): This is currently a GPS timestamp. Need to update to UNIX when (re)building the index.
     ("img_time", np.double),
     ("shutter_s", np.double),
     ("seq_counter", np.int64),

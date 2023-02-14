@@ -4,29 +4,32 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from lzma import LZMAError
+from functools import cached_property
 from typing import Tuple, Union
 from urllib.parse import urlparse
 
 import fire
 import fsspec
-import ipdb
-import numpy as np
-import open3d as o3d
 from joblib import Parallel, delayed
 from PIL import Image
 from tqdm import tqdm
 
 
 class Pit30MCLI:
-    def __init__(self):
+    def __init__(self, log_list_fpath: str = os.path.join(os.path.dirname(__file__), "all_logs.txt")):
         self._read_pool = Parallel(n_jobs=mp.cpu_count() * 4)
-        pass
+        self._log_list_fpath = log_list_fpath
+
+    @cached_property
+    def all_log_ids(self) -> list[str]:
+        """Return a list of all log IDs in the dataset."""
+        with open(self._log_list_fpath, "r") as f:
+            return [line.strip() for line in f]
 
     def woof(self):
         print("bow wow")
 
-    def multicam_demo(self, dataset_base: str, log_uri: str, out_dir: str, chunks: Union[int, tuple[int]]=(16,17)) -> None:
+    def multicam_demo(self, dataset_base: str, log_uri: str, out_dir: str, chunks: Union[int, tuple[int]] = (16,17)) -> None:
         """Bakes a multicam video from a log URI. Requires `ffmpeg` to be installed.
 
         chunks = 100-image chunks of log to include
@@ -91,4 +94,6 @@ def unzip(l):
 
 
 if __name__ == "__main__":
+    # Ensures we can use multiprocessing and fsspec together.
+    mp.set_start_method("forkserver")
     fire.Fire(Pit30MCLI)

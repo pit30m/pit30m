@@ -3,12 +3,13 @@ import io
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from functools import cached_property, lru_cache
+from typing import Iterator
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
-import ipdb
 import lz4
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from PIL import Image
 
 from pit30m.camera import CamName
 from pit30m.data.submap import Map
+from pit30m.time_utils import gps_seconds_to_utc
 
 
 @dataclass
@@ -42,6 +44,9 @@ class LiDARFrame:
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
 
+
+def gps_to_unix_timestamp(gps_seconds: float) -> float:
+    return gps_seconds_to_utc(gps_seconds).timestamp()
 
 
 class LogReader:
@@ -74,20 +79,20 @@ class LogReader:
 
 
     @property
-    def log_id(self):
+    def log_id(self) -> str:
         return os.path.basename(self._log_root_uri)
 
     @property
-    def cam_root(self):
+    def cam_root(self) -> str:
         """Root for all the camera data (each camera is a subdirectory)."""
         return os.path.join(self._log_root_uri, "cameras")
 
     @property
-    def lidar_root(self):
+    def lidar_root(self) -> str:
         # Simpler than cameras since there's always a single lidar.
         return os.path.join(self._log_root_uri, "lidars", VELODYNE_NAME)
 
-    def get_cam_root(self, cam_name: CamName):
+    def get_cam_root(self, cam_name: CamName) -> str:
         assert isinstance(cam_name, CamName)
         return os.path.join(self._log_root_uri, "cameras", cam_name.value)
 
@@ -274,7 +279,7 @@ class LogReader:
     def get_image(self, cam_name: CamName, idx: int) -> CameraImage:
         """Loads a camera image by index in log, used in torch data loading."""
         index_entry = self.get_cam_geo_index(cam_name)[idx]
-        rel_path = index_entry["rel_path"]
+        rel_path = index_entry["rel_path"].strip()
         fpath = os.path.join(self.get_cam_root(cam_name), rel_path)
 
         # NOTE(andrei): ~35-40ms to open a LOCAL webp image, 120-200ms to open an S3 webp image. PyTorch does not like
@@ -287,15 +292,22 @@ class LogReader:
                     image_np = np.array(img)
             return CameraImage(
                 image=image_np,
-                cam_name=cam_name.value,
-                capture_timestamp=index_entry["img_time"],
+                cam_name=cam_name,
+                capture_timestamp=gps_to_unix_timestamp(index_entry["img_time"]),
                 gain_db=index_entry["gain_db"],
                 shutter_time_s=index_entry["shutter_s"],
             )
 
+    def camera_iterator(self, cam_name: CamName, start: int = 0, step: int = 1) -> Iterator[CameraImage]:
+        assert start >= 0
+        assert step > 0
+        index = self.get_cam_geo_index(cam_name)
+        for row_index in range(start, len(index), step):
+            yield self.get_image(cam_name, row_index)
+
     def get_lidar(self, rel_path: str) -> LiDARFrame:
         """Loads the LiDAR scan for the given relative path, used in torch data loading."""
-        fpath = os.path.join(self.get_cam_root(CamName.MIDDLE_FRONT_WIDE), rel_path)
+        fpath = os.path.join(self.lidar_root, rel_path)
         with fsspec.open(fpath, "rb") as f_compressed:
             with lz4.frame.open(f_compressed, "rb") as f:
                 npf = np.load(f)
