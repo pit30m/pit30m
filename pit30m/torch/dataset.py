@@ -1,5 +1,6 @@
 import os
 import time
+from functools import cached_property
 from typing import Sequence, Union
 from uuid import UUID
 
@@ -26,29 +27,47 @@ class Pit30MLogDataset(Dataset):
         """
         super().__init__()
 
-        self._map = Map.from_submap_utm_uri(submap_utm_uri)
-        self._log_readers = {
-            log_id: LogReader(os.path.join(root_uri, str(log_id)), map=self._map) for log_id in log_ids
-        }
         self._cam_name = cam_name
+        self._root_uri = root_uri
+        self._log_ids = log_ids
+        self._submap_utm_uri = submap_utm_uri
 
-        print(f"Loading {len(log_ids)} indexes...")
-        self._indexes = [
-            (log_id, reader.get_cam_geo_index(cam_name=CamName.MIDDLE_FRONT_WIDE))
+        # print(f"Loading {len(log_ids)} indexes...")
+    @cached_property
+    def _map(self):
+        return Map.from_submap_utm_uri(self._submap_utm_uri)
+
+    @cached_property
+    def _log_readers(self):
+        return {
+            log_id: LogReader(os.path.join(self._root_uri, str(log_id)), map=self._map) for log_id in self._log_ids
+        }
+
+    @cached_property
+    def _lengths(self):
+        return [len(index) for _, index in self._indexes]
+
+    @cached_property
+    def _indexes(self):
+        return [
+            (log_id, reader.get_cam_geo_index(cam_name=self._cam_name))
             for log_id, reader in self._log_readers.items()
         ]
 
-        self._lengths = [len(index) for _, index in self._indexes]
-        self._len_cdf = np.cumsum(self._lengths)
+    @cached_property
+    def _len_cdf(self):
+        return np.cumsum(self._lengths)
 
-        print("Done loading indexes...")
-        self._total = sum(self._lengths)
+    @cached_property
+    def n_samples(self) -> int:
+        return sum(self._lengths)
 
     def __len__(self):
-        return self._total
+        return self.n_samples
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, tuple, tuple]:
         """Returns the image, its metadata and the MRP at the given index."""
+        # print(f"Getting item {index}...")
         log_idx = np.searchsorted(self._len_cdf, index, side="right")
         idx_in_log = index - self._len_cdf[log_idx] if log_idx > 0 else index
         cur_log_id, cur_index = self._indexes[log_idx]
@@ -94,7 +113,7 @@ def demo_dataloader(
     if isinstance(logs, str):
         logs = [entry.strip() for entry in logs.split(",")]
     # Failure to do this causes fsspec to hang in workers
-    mp.set_start_method("forkserver")
+    # mp.set_start_method("forkserver")
 
     logs = [UUID(log) for log in logs]
 
@@ -107,7 +126,7 @@ def demo_dataloader(
         batch_size=batch_size,
         num_workers=num_workers,
         shuffle=False,
-        prefetch_factor=2,
+        # prefetch_factor=8 if num_workers > 0 else None,
         pin_memory=True,
         drop_last=False,
     )

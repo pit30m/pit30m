@@ -1,4 +1,5 @@
 import csv
+import io
 import os
 import time
 from dataclasses import dataclass
@@ -280,7 +281,10 @@ class LogReader:
         # high latency data loading, so we will need to rewrite parts of the dataloader to perform true async reading
         # separate from the dataloader parallelism.
         with fsspec.open(fpath, "rb") as f:
-            image_np = np.array(Image.open(f))
+            bts = f.read()
+            with io.BytesIO(bts) as fbuf:
+                with Image.open(fbuf) as img:
+                    image_np = np.array(img)
             return CameraImage(
                 image=image_np,
                 cam_name=cam_name.value,
