@@ -1,20 +1,19 @@
 import pickle as pkl
 import uuid
-import ipdb
+from typing import Mapping, Optional, Tuple, Union
 from uuid import UUID
-from typing import Mapping, Tuple, Union, Optional
 
-import numpy as np
+import fsspec
+import ipdb
 import matplotlib.pyplot as plt
 import numpy as np
-import fsspec
-from pyproj import CRS, Transformer
 from joblib import Memory
-
+from pyproj import CRS, Transformer
 
 # See: https://epsg.io/32617
 UTM_ZONE_IN_PITTSBURGH_CODE = 32617
 WGS84_CODE = 4326
+DEFAULT_SUBMAP_INFO_PREFIX = "submap_utm.pkl"
 
 
 memory = Memory(location="/tmp/pit30m", verbose=0)
