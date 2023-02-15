@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class CamName(Enum):
     """Names of cameras available in the dataset.
 

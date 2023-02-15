@@ -6,13 +6,13 @@ from uuid import UUID
 
 import fire
 import numpy as np
-import torch.multiprocessing as mp
-from torch.utils.data import DataLoader, Dataset
 
+import torch.multiprocessing as mp
 from pit30m.camera import CamName
 from pit30m.data.log_reader import CameraImage, LiDARFrame, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
+from torch.utils.data import DataLoader, Dataset
 
 
 class Pit30MLogDataset(Dataset):

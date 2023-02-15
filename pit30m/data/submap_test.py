@@ -1,8 +1,10 @@
-import pytest
-import numpy as np
 import uuid
 
+import numpy as np
+import pytest
+
 from pit30m.data.submap import Map
+
 
 @pytest.fixture(name="dummy_submap_to_utm")
 def _dummy_submap_to_utm():
