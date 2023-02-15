@@ -1,7 +1,7 @@
 from itertools import zip_longest
 
 
-def print_list_with_limit(lst, limit: int, logger = None) -> None:
+def print_list_with_limit(lst, limit: int, logger=None) -> None:
     out = ""
     for entry in lst[:limit]:
         out += f"\t - {entry}\n"
@@ -12,7 +12,6 @@ def print_list_with_limit(lst, limit: int, logger = None) -> None:
         print(out)
     else:
         logger.info("%s", out)
-
 
 
 def safe_zip(*args):

@@ -61,6 +61,7 @@ KNOWN_INCOMPLETE_CAMERAS = [
 
 cache = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
+
 @dataclass
 class CamReportSummary:
     n_ok: int
@@ -74,7 +75,6 @@ class CamReportSummary:
     @property
     def n_errs(self) -> int:
         return len(self.errors)
-
 
 
 class LogStatus(Enum):
@@ -165,17 +165,13 @@ def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
     return cam_images
 
 
-
 def qls_it(root: str, log_ids: list[str], batch_size: int):
     """Parallelized iterator version of query_log_status."""
     # Over-subscribing is fine for network-bound tasks.
     pool = Parallel(n_jobs=mp.cpu_count() * 10)
 
     for i in range(0, len(log_ids), batch_size):
-        res = pool(
-            delayed(query_log_status)(root, log_id)
-            for log_id in log_ids[i : min(i + batch_size, len(log_ids))]
-        )
+        res = pool(delayed(query_log_status)(root, log_id) for log_id in log_ids[i : min(i + batch_size, len(log_ids))])
         for element in res:
             yield element
 
@@ -316,13 +312,17 @@ class MonkeyWrench:
             if r is None:
                 no_index += 1
             else:
-                has_stereo = (r.get(CamName.MIDDLE_FRONT_NARROW_LEFT, 0) >= min_img and
-                    r.get(CamName.MIDDLE_FRONT_NARROW_RIGHT) >= min_img)
-                has_non_stereo = r[CamName.MIDDLE_FRONT_WIDE] >= min_img and \
-                    r[CamName.PORT_FRONT_WIDE] >= min_img and \
-                    r[CamName.STARBOARD_FRONT_WIDE] >= min_img and \
-                    r[CamName.PORT_REAR_WIDE] >= min_img and \
-                    r[CamName.STARBOARD_REAR_WIDE] >= min_img
+                has_stereo = (
+                    r.get(CamName.MIDDLE_FRONT_NARROW_LEFT, 0) >= min_img
+                    and r.get(CamName.MIDDLE_FRONT_NARROW_RIGHT) >= min_img
+                )
+                has_non_stereo = (
+                    r[CamName.MIDDLE_FRONT_WIDE] >= min_img
+                    and r[CamName.PORT_FRONT_WIDE] >= min_img
+                    and r[CamName.STARBOARD_FRONT_WIDE] >= min_img
+                    and r[CamName.PORT_REAR_WIDE] >= min_img
+                    and r[CamName.STARBOARD_REAR_WIDE] >= min_img
+                )
 
                 missing = 0
                 for cam in CamName:
@@ -408,8 +408,16 @@ class MonkeyWrench:
             # TODO(andrei): Iron out this command.
             print(f"python monkeywrench.py index_all_cameras {log_id} --root s3://pit30m/")
 
-    def next_to_etl(self, max: int = 10, include_attempted_but_incomplete: bool = False, kind: str = "gpu",
-            batch_size: int = 32, n_read_workers: int = 14, webp_out_quality: int = 85, input_limit: int = 300):
+    def next_to_etl(
+        self,
+        max: int = 10,
+        include_attempted_but_incomplete: bool = False,
+        kind: str = "gpu",
+        batch_size: int = 32,
+        n_read_workers: int = 14,
+        webp_out_quality: int = 85,
+        input_limit: int = 300,
+    ):
         """Computes internal dump commands for the next logs to process.
 
         Args:
@@ -458,13 +466,17 @@ class MonkeyWrench:
         #     print("(or attempted but incomplete logs)")
         for log_id in effective_list:
             if kind == "gpu":
-                print(f"python process.py etl_images {log_id} --anonymizer yolo --anonymizer-weights "
+                print(
+                    f"python process.py etl_images {log_id} --anonymizer yolo --anonymizer-weights "
                     f"/app/weights/anon-yolo5m-exp21-best.fp16.bs{batch_size}.1280.engine --image-batch-size {batch_size} "
                     f"--meta-batch-size {batch_size * 4} --out-root s3://pit30m/ --n-read-workers {n_read_workers} "
-                    f"--webp-out-quality {webp_out_quality}")
+                    f"--webp-out-quality {webp_out_quality}"
+                )
             elif kind == "cpu":
-                print(f"python process.py etl_non_images {log_id} --out-root s3://pit30m/ " \
-                    f"--n-read-workers {int(n_read_workers)}")
+                print(
+                    f"python process.py etl_non_images {log_id} --out-root s3://pit30m/ "
+                    f"--n-read-workers {int(n_read_workers)}"
+                )
 
     def backup_specific_files(self, original_base_uri: str, log_id: str, out_root: str, files: List[str]):
         in_fs = fsspec.filesystem(urlparse(original_base_uri).scheme)
@@ -509,7 +521,6 @@ class MonkeyWrench:
         print(f"Backing up files: {files}")
         for log_id in tqdm(self.all_logs):
             self.backup_specific_files(original_base_uri, log_id, out_root, files)
-
 
     # def index_all_cameras(
     #     self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True, parallel: bool = True
@@ -593,7 +604,7 @@ class MonkeyWrench:
         out_scheme = urlparse(out_index_dir).scheme
         # in_fs = fsspec.filesystem(in_scheme)
         out_fs = fsspec.filesystem(out_scheme)
-    #     _logger.info("out fs scheme: %s", out_scheme)
+        #     _logger.info("out fs scheme: %s", out_scheme)
 
         out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version}.npy")
         out_index_fpath_npz = out_index_fpath.replace(".npy", ".npz")
@@ -606,8 +617,12 @@ class MonkeyWrench:
             self._logger.info("Index already exists at %s and %s", out_index_fpath, out_index_fpath_npz)
             return
 
-        self._logger.info("Will build index... reindex = %s, exists_npy = %s, exists_npz = %s", str(reindex),
-                    str(exists_npy), str(exists_npz))
+        self._logger.info(
+            "Will build index... reindex = %s, exists_npy = %s, exists_npz = %s",
+            str(reindex),
+            str(exists_npy),
+            str(exists_npz),
+        )
         index = build_camera_index(self._root, log_reader, cam_dir, self._logger)
 
         # For a rather hefty log (1h20) a v0 index would be ~17MiB uncompressed per camera.
@@ -621,8 +636,9 @@ class MonkeyWrench:
         print(f"Wrote index(es) to: {out_index_fpath}")
 
     def index_lidar_debug(self, log_index, reindex=False, index_version: int = 0):
-        return self.index_lidar(self.all_logs[log_index], reindex=reindex, index_version=index_version,
-                                out_index_dir=None)
+        return self.index_lidar(
+            self.all_logs[log_index], reindex=reindex, index_version=index_version, out_index_dir=None
+        )
 
     def index_lidar(
         self,
@@ -657,8 +673,12 @@ class MonkeyWrench:
             self._logger.info("LiDAR index already exists at %s and %s", out_index_fpath, out_index_fpath_npz)
             return
 
-        self._logger.info("Will build index... reindex = %s, exists_npy = %s, exists_npz = %s", str(reindex),
-                    str(exists_npy), str(exists_npz))
+        self._logger.info(
+            "Will build index... reindex = %s, exists_npy = %s, exists_npz = %s",
+            str(reindex),
+            str(exists_npy),
+            str(exists_npz),
+        )
         index = build_lidar_index(self._root, log_reader, lidar_dir, self._logger)
 
         out_fs.makedirs(out_index_dir, exist_ok=True)
@@ -667,7 +687,6 @@ class MonkeyWrench:
         with out_fs.open(out_index_fpath_npz, "wb") as out_f:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
-
 
     def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
         """
@@ -900,7 +919,6 @@ class MonkeyWrench:
         vs_url = os.path.join(log_root_uri, "vehicle_state.npz.lz4")
         if fs.isfile(vs_url):
             try:
-
                 with fs.open(vs_url, "rb") as raw_f:
                     with lz4.frame.open(raw_f, "rb") as f:
                         vs = np.load(f, allow_pickle=True, encoding="latin1")["data"]
@@ -1008,9 +1026,15 @@ class MonkeyWrench:
 
             unmatched_ratio = len(unmatched_frames) / ok
             if ok > 100 and unmatched_ratio > 0.2:
-                errors.append(("", -1, INVALID_REPORT, f"Too many unmatched frames compared to OK frames: " \
-                    f"{ok=} but {len(unmatched_frames)} unmatched ones"))
-
+                errors.append(
+                    (
+                        "",
+                        -1,
+                        INVALID_REPORT,
+                        f"Too many unmatched frames compared to OK frames: "
+                        f"{ok=} but {len(unmatched_frames)} unmatched ones",
+                    )
+                )
 
         if len(errors) > 0:
             print(f"Found {len(errors)} errors in {log_id} camera data....")
