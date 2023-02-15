@@ -1,0 +1,54 @@
+[tool.poetry]
+name = "pit30m"
+version = "0.1.0"
+description = "Development kit for the Aurora Multi-Sensor Dataset (aka Pit30M)."
+authors = ["Andrei Bârsan"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "3.10.6"
+fsspec = "2023.1.0"
+s3fs = "^2023.1.0"
+geopandas = "^0.12.2"
+pygeos = "^0.14"
+numpy = "^1.24.2"
+fire = "^0.5.0"
+joblib = "^1.2.0"
+pillow = "^9.4.0"
+tqdm = "^4.64.1"
+lz4 = "^4.3.2"
+matplotlib = "^3.7.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^6.0.0"
+pytest-mock = "*"
+
+
+[tool.poetry.group.test.dependencies]
+torch = "^1.13.1"
+ipdb = "^0.13.11"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120 # override black's default line-length
+exclude = '''
+/(
+    \.git
+  | \.mypy_cache
+  | \.tox
+  | venv
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+

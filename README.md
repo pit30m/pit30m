@@ -13,6 +13,8 @@ the first to hear of any updates!
 
 ## Getting Started
 
+PyPI package coming soon (`pip install pit30m`).
+
 To preview some example very early stage data, check out the [tutorial notebook](examples/tutorial_00_introduction.ipynb).
 [![Open In Studio Lab](https://studiolab.sagemaker.aws/studiolab.svg)](https://studiolab.sagemaker.aws/import/github/pit30m/pit30m/blob/main/examples/tutorial_00_introduction.ipynb)
 
@@ -38,6 +40,20 @@ python -m pit30m.torch.dataset --root-uri s3://pit30m/ --logs 00682fa6-2183-4a0d
  * Very efficient native S3 support through [AWS-authored PyTorch-optimized S3 DataPipes](https://aws.amazon.com/blogs/machine-learning/announcing-the-amazon-s3-plugin-for-pytorch/).
  * Support for non-S3 data sources, for users who wish to copy the dataset, or parts of it, to their own storage.
  * Tons of examples and tutorials. See `examples/` for more information.
+
+
+## Development
+
+Package development, testing, and releasing is performed with `poetry`. If you just want to use the `pit30m` package, you don't need to care about this section; just have a look at "Getting Started" above!
+
+ 1. [Install poetry](https://python-poetry.org/docs/)
+ 2. Setup/update your `dev` virtual environments with `poetry install --with=dev` in the project root
+ 3. Develop away
+    - run commands like `poetry run python -m pit30m.cli`
+ 4. Test with `poetry run pytest`
+
+
+Note that in the pre-release time, `torch` will be a "dev" dependency, since it's necessary for all tests to pass.
 
 
 ## Citation
