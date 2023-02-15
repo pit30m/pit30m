@@ -20,6 +20,7 @@ def test_associate_1to2():
         associate(qq, tt),
     )
 
+
 def test_associate_2to1():
     qq = np.array([1, 2, 3, 4, 5], dtype=np.float32)
     tt = np.array([1, 2, 3, 4], dtype=np.float32)
@@ -36,4 +37,3 @@ def test_associate_right_side():
         np.array([0, 1, 1, 1, 2, 2, 2, 2]),
         associate(qq, tt),
     )
-

@@ -28,6 +28,7 @@ pytest-mock = "*"
 [tool.poetry.group.test.dependencies]
 torch = "^1.13.1"
 ipdb = "^0.13.11"
+black = "^23.1.0"
 
 [build-system]
 requires = ["poetry-core"]
