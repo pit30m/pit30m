@@ -11,8 +11,6 @@ from urllib.parse import urlparse
 import fire
 import fsspec
 from joblib import Parallel, delayed
-from PIL import Image
-from tqdm import tqdm
 
 
 class Pit30MCLI:
