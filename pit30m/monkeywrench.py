@@ -3,7 +3,6 @@
 import csv
 import json
 import logging
-import lzma
 import multiprocessing as mp
 import os
 from collections import Counter
@@ -11,7 +10,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from functools import cached_property
-from lzma import LZMAError
 from typing import List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
 
