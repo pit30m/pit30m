@@ -50,7 +50,6 @@ def gps_to_unix_timestamp(gps_seconds: float) -> float:
 
 
 class LogReader:
-
     def __init__(
         self,
         log_root_uri: str,
@@ -77,7 +76,6 @@ class LogReader:
         self._map = map
         self._index_version = index_version
 
-
     @property
     def log_id(self) -> str:
         return os.path.basename(self._log_root_uri)
@@ -96,6 +94,11 @@ class LogReader:
         assert isinstance(cam_name, CamName)
         return os.path.join(self._log_root_uri, "cameras", cam_name.value)
 
+    @cached_property
+    def fs(self):
+        """Filesystem object used to read log data."""
+        return fsspec.filesystem(urlparse(self._log_root_uri).scheme, anon=True)
+
     @lru_cache(maxsize=16)
     def get_lidar_geo_index(self):
         """Returns a lidar index of dtype LIDAR_INDEX_V0_0_DTYPE.
@@ -104,27 +107,25 @@ class LogReader:
         strings. If you need to use them directly, make sure you use `.strip()` to remove the spaces.
         """
         index_fpath = os.path.join(self.lidar_root, "index", "wgs84.csv")
-        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
-        if not fs.exists(index_fpath):
+        if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
-        with fs.open(index_fpath, "r") as f:
+        with self.fs.open(index_fpath, "r") as f:
             return pd.read_csv(f)
 
     @lru_cache(maxsize=16)
     def get_cam_geo_index(self, cam_name: str) -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE."""
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
-        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
-        if not fs.exists(index_fpath):
+        if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
-        with fs.open(index_fpath, "rb") as f:
+        with self.fs.open(index_fpath, "rb") as f:
             return np.load(f)["index"]
 
     def calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "mono_camera_calibration.npy")
-        with fsspec.open(calib_fpath, "rb") as f:
+        with self.fs.open(calib_fpath, "rb") as f:
             # UnicodeError if encoding not specified because Andrei was lazy when originally dumping the dataset
             # and didn't export calibration in a human-friendly format.
             data = np.load(f, allow_pickle=True, encoding="latin1")
@@ -144,13 +145,12 @@ class LogReader:
 
     def stereo_calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "stereo_camera_calibration.npy")
-        with fsspec.open(calib_fpath, "rb") as f:
+        with self.fs.open(calib_fpath, "rb") as f:
             data = np.load(f, allow_pickle=True, encoding="latin1")
             # Ugly code since I numpy-saved a dict...
             data = data.tolist()["data"]
             # TODO(andrei): Validate, clean, document, write an example, etc.
             return data
-
 
     @cached_property
     def raw_pose_data(self) -> np.ndarray:
@@ -161,7 +161,7 @@ class LogReader:
         TODO(andrei): Document dtype (users now have to manually check dtype to learn).
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        with fsspec.open(pose_fpath, "rb") as in_compressed_f:
+        with self.fs.open(pose_fpath, "rb") as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 return np.load(wgs84_f)["data"]
 
@@ -175,14 +175,18 @@ class LogReader:
         pose_data = []
         # TODO(andrei): Document the timestamps carefully.
         for pose in self.raw_pose_data:
-            pose_data.append((pose["capture_time"],
-                            pose["poses_and_differentials_valid"],
-                            pose["continuous"]["x"],
-                            pose["continuous"]["y"],
-                            pose["continuous"]["z"],
-                            pose["continuous"]["roll"],
-                            pose["continuous"]["pitch"],
-                            pose["continuous"]["yaw"]))
+            pose_data.append(
+                (
+                    pose["capture_time"],
+                    pose["poses_and_differentials_valid"],
+                    pose["continuous"]["x"],
+                    pose["continuous"]["y"],
+                    pose["continuous"]["z"],
+                    pose["continuous"]["roll"],
+                    pose["continuous"]["pitch"],
+                    pose["continuous"]["yaw"],
+                )
+            )
         pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
         return pose_index
 
@@ -208,30 +212,34 @@ class LogReader:
         # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
             # TODO(andrei): Custom, interpretable dtype!
-            pose_data.append((
-                pose["capture_time"],
-                pose["poses_and_differentials_valid"],
-                pose["map_relative"]["submap"],
-                pose["map_relative"]["x"],
-                pose["map_relative"]["y"],
-                pose["map_relative"]["z"],
-                pose["map_relative"]["roll"],
-                pose["map_relative"]["pitch"],
-                pose["map_relative"]["yaw"],
-            ))
+            pose_data.append(
+                (
+                    pose["capture_time"],
+                    pose["poses_and_differentials_valid"],
+                    pose["map_relative"]["submap"],
+                    pose["map_relative"]["x"],
+                    pose["map_relative"]["y"],
+                    pose["map_relative"]["z"],
+                    pose["map_relative"]["roll"],
+                    pose["map_relative"]["pitch"],
+                    pose["map_relative"]["yaw"],
+                )
+            )
         pose_index = np.array(
             sorted(pose_data, key=lambda x: x[0]),
-            dtype=np.dtype([
-                ("time", np.float64),
-                ("valid", np.bool),
-                ("submap_id", "|S32"),
-                ("x", np.float64),
-                ("y", np.float64),
-                ("z", np.float64),
-                ("roll", np.float64),
-                ("pitch", np.float64),
-                ("yaw", np.float64),
-            ]),
+            dtype=np.dtype(
+                [
+                    ("time", np.float64),
+                    ("valid", np.bool),
+                    ("submap_id", "|S32"),
+                    ("x", np.float64),
+                    ("y", np.float64),
+                    ("z", np.float64),
+                    ("roll", np.float64),
+                    ("pitch", np.float64),
+                    ("yaw", np.float64),
+                ]
+            ),
         )
         return pose_index
 
@@ -251,7 +259,7 @@ class LogReader:
     def raw_wgs84_poses(self) -> np.ndarray:
         """Raw WGS84 poses, not optimized offline. 10Hz."""
         wgs84_fpath = os.path.join(self._log_root_uri, self._wgs84_pose_fname)
-        with fsspec.open(wgs84_fpath, "rb") as in_compressed_f:
+        with self.fs.open(wgs84_fpath, "rb") as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 return np.load(wgs84_f)["data"]
 
@@ -266,13 +274,17 @@ class LogReader:
         raw = self.raw_wgs84_poses
         wgs84_data = []
         for wgs84 in raw:
-            wgs84_data.append((wgs84["timestamp"],
-                            wgs84["longitude"],
-                            wgs84["latitude"],
-                            wgs84["altitude"],
-                            wgs84["roll"],
-                            wgs84["pitch"],
-                            wgs84["heading"]))
+            wgs84_data.append(
+                (
+                    wgs84["timestamp"],
+                    wgs84["longitude"],
+                    wgs84["latitude"],
+                    wgs84["altitude"],
+                    wgs84["roll"],
+                    wgs84["pitch"],
+                    wgs84["heading"],
+                )
+            )
         wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
         return wgs84_data
 
@@ -285,7 +297,7 @@ class LogReader:
         # NOTE(andrei): ~35-40ms to open a LOCAL webp image, 120-200ms to open an S3 webp image. PyTorch does not like
         # high latency data loading, so we will need to rewrite parts of the dataloader to perform true async reading
         # separate from the dataloader parallelism.
-        with fsspec.open(fpath, "rb") as f:
+        with self.fs.open(fpath, "rb") as f:
             bts = f.read()
             with io.BytesIO(bts) as fbuf:
                 with Image.open(fbuf) as img:
@@ -308,7 +320,7 @@ class LogReader:
     def get_lidar(self, rel_path: str) -> LiDARFrame:
         """Loads the LiDAR scan for the given relative path, used in torch data loading."""
         fpath = os.path.join(self.lidar_root, rel_path)
-        with fsspec.open(fpath, "rb") as f_compressed:
+        with self.fs.open(fpath, "rb") as f_compressed:
             with lz4.frame.open(f_compressed, "rb") as f:
                 npf = np.load(f)
                 return LiDARFrame(
@@ -322,7 +334,7 @@ class LogReader:
     #     index = self.get_lidar_geo_index()
     #     for row in index.itertuples():
     #         lidar_fpath = os.path.join(self.lidar_root, row.lidar_fpath)
-    #         with fsspec.open(lidar_fpath, "rb") as compressed_f:
+    #         with self.fs.open(lidar_fpath, "rb") as compressed_f:
     #             with lz4.frame.open(compressed_f, "rb") as f:
     #                 npf = np.load(f)
     #                 yield LiDARFrame(
@@ -332,4 +344,3 @@ class LogReader:
     #                     intensity=npf["intensity"],
     #                     point_times=npf["seconds"],
     #                 )
-
