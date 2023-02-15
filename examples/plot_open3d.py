@@ -15,8 +15,7 @@ sys.path.append(pth)
 try:
     import open3d as o3d
 except ImportError:
-    print("Warning: Open3d is required for this example, but not installed.\n"
-        "Install with `pip install open3d`.")
+    print("Warning: Open3d is required for this example, but not installed.\n" "Install with `pip install open3d`.")
     print(f"Current Python: {sys.executable}")
     exit(0)
 
@@ -29,12 +28,12 @@ def np_to_o3d_pcd(xyz):
     pcd.points = o3d.utility.Vector3dVector(xyz)
     return pcd
 
+
 def open3d_example(log_root_uri: str):
     log_reader = LogReader(log_root_uri)
     lidar = next(log_reader.lidar_iterator())
 
     o3d.visualization.draw_geometries([np_to_o3d_pcd(lidar.xyz_continuous)])
-
 
 
 def open3d_many_sweeps_example(self, log_root_uri: str) -> None:
@@ -44,7 +43,6 @@ def open3d_many_sweeps_example(self, log_root_uri: str) -> None:
 
     lr = LogReader(log_root_uri)
     fs = fsspec.filesystem(urlparse(log_root_uri).scheme)
-
 
     with mp.Pool(processes=mp.cpu_count() - 1) as pool:
         for lid_dir in fs.ls(ld):
@@ -100,8 +98,6 @@ def open3d_many_sweeps_example(self, log_root_uri: str) -> None:
 #         except LZMAError:
 #             print("LZMA error reading LiDAR uri: ", lidar_uri)
 #             raise
-
-
 
 
 if __name__ == "__main__":

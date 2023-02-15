@@ -10,10 +10,11 @@ from joblib import Memory
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 
-
 @memory.cache(ignore=["fs"])
 def cached_glob(
-    root_dir: str, extension: str, fs: Optional[fsspec.AbstractFileSystem] = None,
+    root_dir: str,
+    extension: str,
+    fs: Optional[fsspec.AbstractFileSystem] = None,
 ) -> list[str]:
     scheme = urlparse(root_dir).scheme
     if fs is None:
@@ -26,12 +27,11 @@ def cached_glob(
 
 
 def cached_glob_images(
-    root_dir: str, fs: Optional[fsspec.AbstractFileSystem] = None,
+    root_dir: str,
+    fs: Optional[fsspec.AbstractFileSystem] = None,
 ) -> list[str]:
     return cached_glob(root_dir, ".webp", fs)
 
 
-def cached_glob_lidar_sweeps(
-    root_dir: str, fs: Optional[fsspec.AbstractFileSystem]
-) -> list[str]:
+def cached_glob_lidar_sweeps(root_dir: str, fs: Optional[fsspec.AbstractFileSystem]) -> list[str]:
     return cached_glob(root_dir, ".npz.lz4", fs)
