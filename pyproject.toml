@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "3.10.6"
+python = "^3.10"
 fsspec = "2023.1.0"
 s3fs = "^2023.1.0"
 geopandas = "^0.12.2"
