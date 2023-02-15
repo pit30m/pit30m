@@ -9,6 +9,7 @@ from pit30m.data.submap import DEFAULT_SUBMAP_INFO_PREFIX, Map
 def _real_map() -> Map:
     return Map.from_submap_utm_uri(f"s3://pit30m/{DEFAULT_SUBMAP_INFO_PREFIX}/")
 
+
 @fixture(name="real_log_reader")
 def _real_log_reader(real_map: Map) -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
