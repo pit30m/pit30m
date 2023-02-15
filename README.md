@@ -48,6 +48,7 @@ Package development, testing, and releasing is performed with `poetry`. If you j
 
  1. [Install poetry](https://python-poetry.org/docs/)
  2. Setup/update your `dev` virtual environments with `poetry install --with=dev` in the project root
+    - If you encounter strange keyring/credential errors, you may need `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`
  3. Develop away
     - run commands like `poetry run python -m pit30m.cli`
  4. Test with `poetry run pytest`
