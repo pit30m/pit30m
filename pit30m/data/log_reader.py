@@ -19,6 +19,7 @@ from pit30m.camera import CamName
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
 
+from pit30m.indexing import _FSSPEC_ARGS
 
 @dataclass
 class CameraImage:
@@ -104,27 +105,27 @@ class LogReader:
         strings. If you need to use them directly, make sure you use `.strip()` to remove the spaces.
         """
         index_fpath = os.path.join(self.lidar_root, "index", "wgs84.csv")
-        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
+        fs = fsspec.filesystem(urlparse(index_fpath).scheme, **_FSSPEC_ARGS)
         if not fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
-        with fs.open(index_fpath, "r") as f:
+        with fs.open(index_fpath, "r", **_FSSPEC_ARGS) as f:
             return pd.read_csv(f)
 
     @lru_cache(maxsize=16)
     def get_cam_geo_index(self, cam_name: str) -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE."""
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
-        fs = fsspec.filesystem(urlparse(index_fpath).scheme)
+        fs = fsspec.filesystem(urlparse(index_fpath).scheme, **_FSSPEC_ARGS)
         if not fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
-        with fs.open(index_fpath, "rb") as f:
+        with fs.open(index_fpath, "rb", **_FSSPEC_ARGS) as f:
             return np.load(f)["index"]
 
     def calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "mono_camera_calibration.npy")
-        with fsspec.open(calib_fpath, "rb") as f:
+        with fsspec.open(calib_fpath, "rb", **_FSSPEC_ARGS) as f:
             # UnicodeError if encoding not specified because Andrei was lazy when originally dumping the dataset
             # and didn't export calibration in a human-friendly format.
             data = np.load(f, allow_pickle=True, encoding="latin1")
@@ -144,7 +145,7 @@ class LogReader:
 
     def stereo_calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "stereo_camera_calibration.npy")
-        with fsspec.open(calib_fpath, "rb") as f:
+        with fsspec.open(calib_fpath, "rb", **_FSSPEC_ARGS) as f:
             data = np.load(f, allow_pickle=True, encoding="latin1")
             # Ugly code since I numpy-saved a dict...
             data = data.tolist()["data"]
@@ -161,7 +162,7 @@ class LogReader:
         TODO(andrei): Document dtype (users now have to manually check dtype to learn).
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        with fsspec.open(pose_fpath, "rb") as in_compressed_f:
+        with fsspec.open(pose_fpath, "rb", **_FSSPEC_ARGS) as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 return np.load(wgs84_f)["data"]
 
@@ -251,7 +252,7 @@ class LogReader:
     def raw_wgs84_poses(self) -> np.ndarray:
         """Raw WGS84 poses, not optimized offline. 10Hz."""
         wgs84_fpath = os.path.join(self._log_root_uri, self._wgs84_pose_fname)
-        with fsspec.open(wgs84_fpath, "rb") as in_compressed_f:
+        with fsspec.open(wgs84_fpath, "rb", **_FSSPEC_ARGS) as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 return np.load(wgs84_f)["data"]
 
@@ -285,7 +286,7 @@ class LogReader:
         # NOTE(andrei): ~35-40ms to open a LOCAL webp image, 120-200ms to open an S3 webp image. PyTorch does not like
         # high latency data loading, so we will need to rewrite parts of the dataloader to perform true async reading
         # separate from the dataloader parallelism.
-        with fsspec.open(fpath, "rb") as f:
+        with fsspec.open(fpath, "rb", **_FSSPEC_ARGS) as f:
             bts = f.read()
             with io.BytesIO(bts) as fbuf:
                 with Image.open(fbuf) as img:
@@ -308,7 +309,7 @@ class LogReader:
     def get_lidar(self, rel_path: str) -> LiDARFrame:
         """Loads the LiDAR scan for the given relative path, used in torch data loading."""
         fpath = os.path.join(self.lidar_root, rel_path)
-        with fsspec.open(fpath, "rb") as f_compressed:
+        with fsspec.open(fpath, "rb", **_FSSPEC_ARGS) as f_compressed:
             with lz4.frame.open(f_compressed, "rb") as f:
                 npf = np.load(f)
                 return LiDARFrame(

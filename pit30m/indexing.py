@@ -19,6 +19,8 @@ MAX_LIDAR_RELPATH_LEN = 14      # = len("007959.npz.lz4")
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
+_FSSPEC_ARGS = {"anon": True}
+
 # Please refer to the NumPy documentation for exact details on type dimensions.
 # https://numpy.org/doc/stable/reference/arrays.dtypes.html
 CAM_INDEX_V0_0_DTYPE = np.dtype([
@@ -108,7 +110,7 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
     robustness.
     """
     meta_uri = img_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
-    with fsspec.open(meta_uri) as meta_f:
+    with fsspec.open(meta_uri, **_FSSPEC_ARGS) as meta_f:
         meta = np.load(meta_f, allow_pickle=True).tolist()
         timestamp_s = float(meta["capture_seconds"])
         # Not used
@@ -123,7 +125,7 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
 def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
     """Returns LiDAR timing metadata."""
     # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
-    with fsspec.open(lidar_uri) as compressed_f:
+    with fsspec.open(lidar_uri, **_FSSPEC_ARGS) as compressed_f:
         with lz4.frame.open(compressed_f, "rb") as f:
             lidar_data = np.load(f)
             point_times = lidar_data["seconds"]

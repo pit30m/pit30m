@@ -11,11 +11,11 @@ import fsspec
 from pyproj import CRS, Transformer
 from joblib import Memory
 
+from pit30m.indexing import _FSSPEC_ARGS
 
 # See: https://epsg.io/32617
 UTM_ZONE_IN_PITTSBURGH_CODE = 32617
 WGS84_CODE = 4326
-
 
 memory = Memory(location="/tmp/pit30m", verbose=0)
 
@@ -25,7 +25,7 @@ class Map:
     @memory.cache()
     def from_submap_utm_uri(uri: str) -> "Map":
         """Loads a submap index from the given URI."""
-        with fsspec.open(uri, "rb") as f:
+        with fsspec.open(uri, "rb", **_FSSPEC_ARGS) as f:
             submap_utm = pkl.load(f)
 
         # Store actual UUID objects for efficiency
