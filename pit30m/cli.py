@@ -14,7 +14,12 @@ from joblib import Parallel, delayed
 
 
 class Pit30MCLI:
-    def __init__(self, log_list_fpath: str = os.path.join(os.path.dirname(__file__), "all_logs.txt")):
+    def __init__(
+        self,
+        data_root: str = "s3://pit30m/",
+        log_list_fpath: str = os.path.join(os.path.dirname(__file__), "all_logs.txt"),
+    ):
+        self._data_root = data_root
         self._read_pool = Parallel(n_jobs=mp.cpu_count() * 4)
         self._log_list_fpath = log_list_fpath
 
