@@ -23,14 +23,13 @@ matplotlib = "^3.7.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.1.0"
 pytest-mock = "*"
-
-
-[tool.poetry.group.test.dependencies]
-torch = "^1.13.1"
 ipdb = "^0.13.11"
 black = "^23.1.0"
 pytest-xdist = "^3.2.0"
+# TODO(andrei): Special group and special build for these optional deps.
+torch = "^1.13.1"
 torchdata = "^0.5.1"
+pylint = "^2.16.2"
 
 [build-system]
 requires = ["poetry-core"]
