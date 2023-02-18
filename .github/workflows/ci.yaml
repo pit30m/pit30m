@@ -1,4 +1,4 @@
-name: Python CI (tests and linting)
+name: Python CI
 
 on: [pull_request]
 
@@ -22,7 +22,7 @@ jobs:
           key: poetry-cache-${{ runner.os }}-${{ matrix.python-version }}-${{ env.POETRY_VERSION }}
       # virtualenv cache should depends on OS, Python version and `poetry.lock` (and optionally workflow files).
       - name: Cache Packages
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: ~/.local
           key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}-${{ hashFiles('.github/workflows/*.yml') }}
@@ -42,4 +42,4 @@ jobs:
       - name: Test with pytest
         run: |
           poetry run pytest
-        # NOTE(andrei): We can pass '-n K' to parallelize tests.
+        # NOTE(andrei): We can pass '-n K' to parallelize tests. (Or just use tox.)
