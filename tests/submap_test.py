@@ -14,6 +14,7 @@ def _dummy_submap_to_utm():
         "c": (20, 20),
     }
 
+
 @pytest.fixture(name="dummy_real_submap_to_utm")
 def _dummy_real_submap_to_utm():
     return {
@@ -25,35 +26,38 @@ def _dummy_real_submap_to_utm():
 def test_utm(dummy_submap_to_utm):
     map = Map(submap_to_utm=dummy_submap_to_utm)
 
-    fake_poses = np.array([
-        [7, 7],
-        [1, 1],
-        [-2, 0.3],
-    ])
+    fake_poses = np.array(
+        [
+            [7, 7],
+            [1, 1],
+            [-2, 0.3],
+        ]
+    )
     fake_submap_ids = ["a", "b", "c"]
 
-    utm_coords = map.to_utm(
-        fake_poses, fake_submap_ids
+    utm_coords = map.to_utm(fake_poses, fake_submap_ids)
+    np.testing.assert_allclose(
+        utm_coords,
+        np.array(
+            [
+                [7, 7],
+                [11, 11],
+                [18, 20.3],
+            ]
+        ),
     )
-    np.testing.assert_allclose(utm_coords, np.array([
-        [7, 7],
-        [11, 11],
-        [18, 20.3],
-    ]))
 
 
 def test_wgs84(dummy_real_submap_to_utm):
     map = Map(submap_to_utm=dummy_real_submap_to_utm)
 
-    fake_poses = np.array([
-        [0.33, -0.33],
-    ])
+    fake_poses = np.array(
+        [
+            [0.33, -0.33],
+        ]
+    )
     fake_submap_ids = [uuid.uuid3(uuid.NAMESPACE_URL, "pratt")]
 
-    wgs84_coords = map.to_wgs84(
-        fake_poses, fake_submap_ids
-    )
+    wgs84_coords = map.to_wgs84(fake_poses, fake_submap_ids)
     # GT computed using epsg.io
-    np.testing.assert_allclose(wgs84_coords, np.array([
-        [43.531002, -79.3625012]
-    ]))
+    np.testing.assert_allclose(wgs84_coords, np.array([[43.531002, -79.3625012]]))

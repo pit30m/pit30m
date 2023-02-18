@@ -13,12 +13,13 @@ from pyproj import CRS, Transformer
 # See: https://epsg.io/32617
 UTM_ZONE_IN_PITTSBURGH_CODE = 32617
 WGS84_CODE = 4326
+DEFAULT_SUBMAP_INFO_PREFIX = "submap_utm.pkl"
 
 
 memory = Memory(location="/tmp/pit30m", verbose=0)
 
-class Map:
 
+class Map:
     @staticmethod
     @memory.cache()
     def from_submap_utm_uri(uri: str) -> "Map":
@@ -65,7 +66,6 @@ class Map:
         crs_wgs84 = CRS.from_epsg(WGS84_CODE)
         self._pit30m_utm_to_wgs84 = Transformer.from_crs(crs_utm, crs_wgs84)
 
-
     def to_utm(self, map_poses_xyz, submap_ids):
         """Returns corresponding UTM coordinates for the given pose + submap ID combinations.
 
@@ -97,8 +97,5 @@ class Map:
         """
         utm_poses = self.to_utm(map_poses, submap_ids)
         # 20x faster than manually looping over the coords in Python
-        wgs_lat, wgs_lon = self._pit30m_utm_to_wgs84.transform(
-            utm_poses[:, 0, np.newaxis],
-            utm_poses[:, 1, np.newaxis]
-        )
+        wgs_lat, wgs_lon = self._pit30m_utm_to_wgs84.transform(utm_poses[:, 0, np.newaxis], utm_poses[:, 1, np.newaxis])
         return np.hstack((wgs_lat, wgs_lon))

@@ -11,12 +11,15 @@ from urllib.parse import urlparse
 import fire
 import fsspec
 from joblib import Parallel, delayed
-from PIL import Image
-from tqdm import tqdm
 
 
 class Pit30MCLI:
-    def __init__(self, log_list_fpath: str = os.path.join(os.path.dirname(__file__), "all_logs.txt")):
+    def __init__(
+        self,
+        data_root: str = "s3://pit30m/",
+        log_list_fpath: str = os.path.join(os.path.dirname(__file__), "all_logs.txt"),
+    ):
+        self._data_root = data_root
         self._read_pool = Parallel(n_jobs=mp.cpu_count() * 4)
         self._log_list_fpath = log_list_fpath
 
@@ -29,7 +32,9 @@ class Pit30MCLI:
     def woof(self):
         print("bow wow")
 
-    def multicam_demo(self, dataset_base: str, log_uri: str, out_dir: str, chunks: Union[int, tuple[int]] = (16,17)) -> None:
+    def multicam_demo(
+        self, dataset_base: str, log_uri: str, out_dir: str, chunks: Union[int, tuple[int]] = (16, 17)
+    ) -> None:
         """Bakes a multicam video from a log URI. Requires `ffmpeg` to be installed.
 
         chunks = 100-image chunks of log to include
@@ -39,7 +44,7 @@ class Pit30MCLI:
         in_fs = fsspec.filesystem(urlparse(dataset_base).scheme)
         out_fs = fsspec.filesystem(urlparse(out_dir).scheme)
         if isinstance(chunks, int):
-            chunks = (chunks)
+            chunks = chunks
 
         # Clockwise wide camera names, with the front wide in the middle
         cams_clockwise = [
@@ -75,16 +80,20 @@ class Pit30MCLI:
 
                 framerate = 10
                 subprocess.run(
-                    shlex.split(f"ffmpeg -framerate {framerate} -i {out_img_dir}/%*.day.webp -crf 20 -pix_fmt yuv420p " \
-                        f"-filter:v 'scale=-1:800' {out_img_dir}.mp4")
+                    shlex.split(
+                        f"ffmpeg -framerate {framerate} -i {out_img_dir}/%*.day.webp -crf 20 -pix_fmt yuv420p "
+                        f"-filter:v 'scale=-1:800' {out_img_dir}.mp4"
+                    )
                 )
                 video_fpaths.append(f"{out_img_dir}.mp4")
 
             # Stack the resulting videos horizontally with ffmpeg
             print(video_fpaths)
             subprocess.run(
-                shlex.split(f"ffmpeg -i {' -i '.join(video_fpaths)} -filter_complex hstack=inputs={len(video_fpaths)} " \
-                    f"{out_dir}/{log_uri}-sample-multicam.mp4")
+                shlex.split(
+                    f"ffmpeg -i {' -i '.join(video_fpaths)} -filter_complex hstack=inputs={len(video_fpaths)} "
+                    f"{out_dir}/{log_uri}-sample-multicam.mp4"
+                )
             )
 
 

@@ -16,7 +16,9 @@ from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 
 
 class Pit30MLogDataset(Dataset):
-    def __init__(self, root_uri: str, log_ids: Sequence[str], submap_utm_uri: str, cam_name: CamName = CamName.MIDDLE_FRONT_WIDE) -> None:
+    def __init__(
+        self, root_uri: str, log_ids: Sequence[str], submap_utm_uri: str, cam_name: CamName = CamName.MIDDLE_FRONT_WIDE
+    ) -> None:
         """A low-level interface dataset for Pit30M operating on a per-log basis.
 
         Somewhat inefficient due to limitations in PyTorch when it comes to high-throughput high-latency data sources,
@@ -33,15 +35,14 @@ class Pit30MLogDataset(Dataset):
         self._submap_utm_uri = submap_utm_uri
 
         # print(f"Loading {len(log_ids)} indexes...")
+
     @cached_property
     def _map(self):
         return Map.from_submap_utm_uri(self._submap_utm_uri)
 
     @cached_property
     def _log_readers(self):
-        return {
-            log_id: LogReader(os.path.join(self._root_uri, str(log_id)), map=self._map) for log_id in self._log_ids
-        }
+        return {log_id: LogReader(os.path.join(self._root_uri, str(log_id)), map=self._map) for log_id in self._log_ids}
 
     @cached_property
     def _lengths(self):
@@ -50,8 +51,7 @@ class Pit30MLogDataset(Dataset):
     @cached_property
     def _indexes(self):
         return [
-            (log_id, reader.get_cam_geo_index(cam_name=self._cam_name))
-            for log_id, reader in self._log_readers.items()
+            (log_id, reader.get_cam_geo_index(cam_name=self._cam_name)) for log_id, reader in self._log_readers.items()
         ]
 
     @cached_property
