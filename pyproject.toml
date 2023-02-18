@@ -21,20 +21,26 @@ lz4 = "^4.3.2"
 matplotlib = "^3.7.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^6.0.0"
+pytest = "^7.1.0"
 pytest-mock = "*"
-
-
-[tool.poetry.group.test.dependencies]
-torch = "^1.13.1"
 ipdb = "^0.13.11"
 black = "^23.1.0"
 pytest-xdist = "^3.2.0"
+# TODO(andrei): Special group and special build for these optional deps.
+torch = "^1.13.1"
 torchdata = "^0.5.1"
+pylint = "^2.16.2"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pylint]
+max-line-length = 120
+# Exceptions for invalid names
+good-names = "f,fs,e,err"
+# Disable missing docstring warnings
+disable = "missing-function-docstring,missing-module-docstring,missing-class-docstring"
 
 [tool.black]
 line-length = 120 # override black's default line-length
