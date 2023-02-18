@@ -1,6 +1,7 @@
-import pytest
-import numpy as np
 import uuid
+
+import numpy as np
+import pytest
 
 from pit30m.data.submap import Map
 
