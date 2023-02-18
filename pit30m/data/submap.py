@@ -1,11 +1,9 @@
 import pickle as pkl
-import uuid
-from typing import Mapping, Optional, Tuple, Union
+from typing import Mapping, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
-import matplotlib.pyplot as plt
 import numpy as np
 from joblib import Memory
 from pyproj import CRS, Transformer
@@ -98,5 +96,6 @@ class Map:
         """
         utm_poses = self.to_utm(map_poses, submap_ids)
         # 20x faster than manually looping over the coords in Python
+        # pylint: disable=unpacking-non-sequence
         wgs_lat, wgs_lon = self._pit30m_utm_to_wgs84.transform(utm_poses[:, 0, np.newaxis], utm_poses[:, 1, np.newaxis])
         return np.hstack((wgs_lat, wgs_lon))

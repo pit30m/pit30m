@@ -35,6 +35,13 @@ pylint = "^2.16.2"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.pylint]
+max-line-length = 120
+# Exceptions for invalid names
+good-names = "f,fs,e,err"
+# Disable missing docstring warnings
+disable = "missing-function-docstring,missing-module-docstring,missing-class-docstring"
+
 [tool.black]
 line-length = 120 # override black's default line-length
 exclude = '''
