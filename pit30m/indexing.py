@@ -232,7 +232,16 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
 
 
 def build_camera_index(in_root, log_reader, cam_dir, _logger):
-    """Internal function to build an index for a sensor in a log."""
+    """Internal function to build an index for a sensor in a log.
+
+    Grabs all available images and tries to associate them with poses by timestamp, creating an index in numpy binary
+    format (easy to parse in C++ as well, for instance). The index has an entry for every image - if that image did not
+    have a matching pose (especially common at the start and end of logs), then the appropriate fields `mrp_present`
+    and `cp_present` will be set to False.
+
+    Please refer to the LogReader documentation and the project README for details on how poses work and what MRP and CP
+    means.
+    """
     _logger.info("Reading continuous pose data")
     cp_dense = log_reader.continuous_pose_dense
     cp_times = np.array(cp_dense[:, 0])
