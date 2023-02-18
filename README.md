@@ -1,6 +1,9 @@
 # Pit30M Development Kit
 
-[![Python CI (tests and linting)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
+<!-- TODO(andrei): Add PyPI versions. -->
+[![Python CI Status](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Public on the AWS Open Data Registry](https://shields.io/badge/Open%20Data%20Registry-public-green?logo=amazonaws&style=flat)](#)
 
 ## Overview
 This is the Python software development kit for the Pit30M benchmark for large-scale global localization.
