@@ -1,10 +1,10 @@
 import pickle as pkl
 import uuid
 from typing import Mapping, Optional, Tuple, Union
+from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
-import ipdb
 import matplotlib.pyplot as plt
 import numpy as np
 from joblib import Memory
@@ -24,7 +24,8 @@ class Map:
     @memory.cache()
     def from_submap_utm_uri(uri: str) -> "Map":
         """Loads a submap index from the given URI."""
-        with fsspec.open(uri, "rb") as f:
+        fs = fsspec.filesystem(urlparse(uri).scheme, anon=True)
+        with fs.open(uri, "rb") as f:
             submap_utm = pkl.load(f)
 
         # Store actual UUID objects for efficiency
