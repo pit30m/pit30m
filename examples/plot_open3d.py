@@ -20,6 +20,7 @@ except ImportError:
     exit(0)
 
 import fire
+
 from pit30m.data.log_reader import LogReader
 
 
