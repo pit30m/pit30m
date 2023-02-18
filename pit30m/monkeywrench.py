@@ -49,6 +49,7 @@ PIT30M_IMAGE_CANARY_DONE = ".pit30m_image_done"
 PIT30M_NONIMAGE_CANARY_DONE = ".pit30m_nonimage_done"
 
 MIN_LIDAR_FRAMES = 10 * 60 * 3
+DEFAULT_CAM_CHECK_FRACTION = 0.0025
 
 TQDM_MIN_INTERVAL_S = 3
 
@@ -636,8 +637,12 @@ class MonkeyWrench:
         print(f"Wrote index(es) to: {out_index_fpath}")
 
     def index_lidar_debug(self, log_index, reindex=False, index_version: int = 0):
+        log_id = self.all_logs[log_index]
+        print("=" * 80)
+        print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
+        print("=" * 80)
         return self.index_lidar(
-            self.all_logs[log_index], reindex=reindex, index_version=index_version, out_index_dir=None
+            log_id, reindex=reindex, index_version=index_version, out_index_dir=None
         )
 
     def index_lidar(
@@ -687,6 +692,116 @@ class MonkeyWrench:
         with out_fs.open(out_index_fpath_npz, "wb") as out_f:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
+
+    def check_all_cameras_by_index(self, idx: int, sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION, in_index_dir: Optional[str] = None, index_version: int = 0):
+        return self.check_all_cameras(self.all_logs[idx], sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version)
+
+    def check_all_cameras(self, log_id: str, sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION, in_index_dir: Optional[str] = None, index_version: int = 0):
+        for cam_name in CamName:
+            self.check_camera(log_id, cam_name, sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version)
+
+    def check_camera(self, log_id: str, cam_name: Union[str, CamName], sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION, in_index_dir: Optional[str] = None, index_version: int = 0,
+                     min_num_samples: int = 500):
+        """Samples camera data and checks its integrity. Camera needs to have been indexed first."""
+        lr = LogReader(os.path.join(self._root, log_id.strip("/")))
+
+        scheme = urlparse(self._root).scheme
+        in_fs = fsspec.filesystem(scheme)
+        log_root = os.path.join(self._root, log_id.lstrip("/"))
+        cam_name = CamName(cam_name) if isinstance(cam_name, str) else cam_name
+        cam_dir = self.get_cam_dir(log_root, cam_name.value)
+
+        meta = {
+            "log_id": log_id,
+            "cam_name": cam_name.value,
+            "sample_fraction": sample_fraction,
+            "in_index_dir": in_index_dir,
+            "index_version": index_version,
+        }
+        problems = []
+
+        try:
+            idx = lr.get_cam_geo_index(cam_name)
+        except FileNotFoundError:
+            problems.append(f"Camera index for {cam_name} not found in log {log_id}")
+            return problems, meta
+
+        if in_index_dir is None:
+            in_index_dir = os.path.join(cam_dir, "index")
+
+        report_dir = os.path.join(os.path.dirname(in_index_dir), "reports")
+        report_fpath = os.path.join(report_dir, f"report_v{index_version:02d}.json")
+        report_meta_fpath = os.path.join(report_dir, f"report_v{index_version:02d}.meta.json")
+
+        self._logger.info("Inferred report fpath to be %s", report_fpath)
+        if in_fs.exists(report_fpath):
+            self._logger.info("Report already exists at %s. Not checking.", report_fpath)
+            return
+
+        self._logger.info("No report. Performing randomized image checking with sample fraction %.4f", sample_fraction)
+        # out_scheme = urlparse(out_index_dir).scheme
+        # out_fs = fsspec.filesystem(out_scheme)
+
+        # out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version}.npy")
+        # out_index_fpath_npz = out_index_fpath.replace(".npy", ".npz")
+
+        if len(idx) < min_num_samples:
+            self._logger.info("Will just check all images")
+            all_idx = range(len(idx))
+        else:
+            start_end = 60 * 10
+            i_st = range(0, start_end)
+            i_end = range(len(idx) - start_end, len(idx))
+            step = int(1 / sample_fraction)
+            mid = range(start_end, len(idx) - start_end, step)
+
+            all_idx = list(i_st) + list(mid) + list(i_end)
+
+        # print(f"Will check {all_idx}")
+        # print(len(all_idx) / len(idx))
+        print(f"Will check {len(all_idx)}, {len(idx)}")
+
+        pool = Parallel(n_jobs=mp.cpu_count() * 2, batch_size=16)
+
+        def check_image(row_idx):
+            idx_entry = idx[row_idx]
+            try:
+                cam_image = lr.get_image(cam_name, row_idx)
+                img_np = cam_image.image
+                if img_np.shape != EXPECTED_IMAGE_SIZE:
+                    print(f"Bad image shape: {img_np.shape} (expected {EXPECTED_IMAGE_SIZE})")
+                    return (log_id, cam_name.value, idx_entry["rel_path"], CAM_UNEXPECTED_SHAPE, str(cam_image.image.shape))
+                else:
+                    # Might indicate bad cases of over/underexposure. Likely won't trigger if the sensor is covered
+                    # by snow (mean is larger than 5-10), which is fine since it's valid data.
+                    img_mean = img_np.mean()
+                    if img_mean < 5:
+                        return (log_id, cam_name.value, idx_entry["rel_path"], CAM_MEAN_TOO_LOW, str(img_mean))
+                    elif img_mean > 250:
+                        return (log_id, cam_name.value, idx_entry["rel_path"], CAM_MEAN_TOO_HIGH, str(img_mean))
+            except Exception as err:
+                return (log_id, cam_name.value, idx_entry["rel_path"], CAM_UNEXPECTED_CORRUPTION, str(err))
+
+            return None
+
+        progress_bar = tqdm(all_idx, desc="Checking images")
+        res = pool(delayed(check_image)(row_idx) for row_idx in progress_bar)
+        problems = [r for r in res if r is not None]
+
+        if 0 != len(problems):
+            print(f"{len(problems)} bad status(es) found!")
+            print_list_with_limit(problems, 20)
+        else:
+            print("No problems found!")
+
+        self._logger.info("Writing report to %s", report_fpath)
+        with in_fs.open(report_fpath, "w") as f:
+            json.dump(problems, f)
+        with in_fs.open(report_meta_fpath, "w") as f:
+            json.dump(meta, f)
+
+        return problems, meta
+
 
     def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
         """
