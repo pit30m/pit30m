@@ -641,9 +641,7 @@ class MonkeyWrench:
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
         print("=" * 80)
-        return self.index_lidar(
-            log_id, reindex=reindex, index_version=index_version, out_index_dir=None
-        )
+        return self.index_lidar(log_id, reindex=reindex, index_version=index_version, out_index_dir=None)
 
     def index_lidar(
         self,
@@ -693,15 +691,42 @@ class MonkeyWrench:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
 
-    def check_all_cameras_by_index(self, idx: int, sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION, in_index_dir: Optional[str] = None, index_version: int = 0):
-        return self.check_all_cameras(self.all_logs[idx], sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version)
+    def check_all_cameras_by_index(
+        self,
+        idx: int,
+        sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION,
+        in_index_dir: Optional[str] = None,
+        index_version: int = 0,
+    ):
+        return self.check_all_cameras(
+            self.all_logs[idx], sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version
+        )
 
-    def check_all_cameras(self, log_id: str, sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION, in_index_dir: Optional[str] = None, index_version: int = 0):
+    def check_all_cameras(
+        self,
+        log_id: str,
+        sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION,
+        in_index_dir: Optional[str] = None,
+        index_version: int = 0,
+    ):
         for cam_name in CamName:
-            self.check_camera(log_id, cam_name, sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version)
+            self.check_camera(
+                log_id,
+                cam_name,
+                sample_fraction=sample_fraction,
+                in_index_dir=in_index_dir,
+                index_version=index_version,
+            )
 
-    def check_camera(self, log_id: str, cam_name: Union[str, CamName], sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION, in_index_dir: Optional[str] = None, index_version: int = 0,
-                     min_num_samples: int = 500):
+    def check_camera(
+        self,
+        log_id: str,
+        cam_name: Union[str, CamName],
+        sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION,
+        in_index_dir: Optional[str] = None,
+        index_version: int = 0,
+        min_num_samples: int = 500,
+    ):
         """Samples camera data and checks its integrity. Camera needs to have been indexed first."""
         lr = LogReader(os.path.join(self._root, log_id.strip("/")))
 
@@ -770,7 +795,13 @@ class MonkeyWrench:
                 img_np = cam_image.image
                 if img_np.shape != EXPECTED_IMAGE_SIZE:
                     print(f"Bad image shape: {img_np.shape} (expected {EXPECTED_IMAGE_SIZE})")
-                    return (log_id, cam_name.value, idx_entry["rel_path"], CAM_UNEXPECTED_SHAPE, str(cam_image.image.shape))
+                    return (
+                        log_id,
+                        cam_name.value,
+                        idx_entry["rel_path"],
+                        CAM_UNEXPECTED_SHAPE,
+                        str(cam_image.image.shape),
+                    )
                 else:
                     # Might indicate bad cases of over/underexposure. Likely won't trigger if the sensor is covered
                     # by snow (mean is larger than 5-10), which is fine since it's valid data.
@@ -801,7 +832,6 @@ class MonkeyWrench:
             json.dump(meta, f)
 
         return problems, meta
-
 
     def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
         """

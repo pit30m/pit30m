@@ -1,5 +1,7 @@
 # Pit30M Development Kit
 
+[![Python CI (tests and linting)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
+
 ## Overview
 This is the Python software development kit for the Pit30M benchmark for large-scale global localization.
 

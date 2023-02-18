@@ -1,11 +1,9 @@
 import pickle as pkl
-import uuid
-from typing import Mapping, Optional, Tuple, Union
+from typing import Mapping, Tuple
+from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
-import ipdb
-import matplotlib.pyplot as plt
 import numpy as np
 from joblib import Memory
 from pyproj import CRS, Transformer
@@ -24,7 +22,8 @@ class Map:
     @memory.cache()
     def from_submap_utm_uri(uri: str) -> "Map":
         """Loads a submap index from the given URI."""
-        with fsspec.open(uri, "rb") as f:
+        fs = fsspec.filesystem(urlparse(uri).scheme, anon=True)
+        with fs.open(uri, "rb") as f:
             submap_utm = pkl.load(f)
 
         # Store actual UUID objects for efficiency
@@ -97,5 +96,6 @@ class Map:
         """
         utm_poses = self.to_utm(map_poses, submap_ids)
         # 20x faster than manually looping over the coords in Python
+        # pylint: disable=unpacking-non-sequence
         wgs_lat, wgs_lon = self._pit30m_utm_to_wgs84.transform(utm_poses[:, 0, np.newaxis], utm_poses[:, 1, np.newaxis])
         return np.hstack((wgs_lat, wgs_lon))
