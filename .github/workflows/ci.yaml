@@ -35,7 +35,6 @@ jobs:
           python -m pip install --upgrade poetry
           poetry install --with=dev
       - name: Check isort compliance
-        uses: actions/checkout@v3
         uses: isort/isort-action@v1.0.0
         with:
             requirements-files: "requirements.txt requirements-test.txt"
