@@ -15,6 +15,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+      - name: Check isort compliance
+        uses: isort/isort-action@v1.0.0
       - name: Cache Poetry cache
         uses: actions/cache@v3
         with:
