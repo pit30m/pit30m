@@ -883,6 +883,7 @@ class MonkeyWrench:
 
     def logs_without_pose(self) -> list[str]:
         """Returns a list of log IDs that do not have a pose file."""
+
         def has_poses(root, log_id):
             uri = os.path.join(root, log_id, "all_poses.npz.lz4")
             fs = fsspec.filesystem(urlparse(uri).scheme, anon=True)
@@ -914,6 +915,7 @@ class MonkeyWrench:
 
             # LZMA specifically required for dealing with data backups. Long story.
             import lzma
+
             with backup_fs.open(source_uri, "rb") as compressed_f_in:
                 with out_fs.open(target_uri, "wb") as compressed_f_out:
                     with lzma.open(compressed_f_in, "rb") as f_in:
