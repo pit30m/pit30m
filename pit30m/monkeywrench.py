@@ -27,7 +27,7 @@ from pit30m.camera import CamName
 from pit30m.data.log_reader import VELODYNE_NAME, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import build_camera_index, build_lidar_index
-from pit30m.util import print_list_with_limit
+from pit30m.util import print_list_with_limit, safe_zip
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
@@ -200,6 +200,10 @@ class MonkeyWrench:
         self._log_status_fpath = log_status_fpath
         self._log_list_fpath = log_list_fpath
         self._submap_utm_fpath = submap_utm_fpath
+
+        self._pool = Parallel(n_jobs=-1, batch_size=8)
+        # Oversubscribed pool for I/O heavy tasks
+        self._over_pool = Parallel(n_jobs=mp.cpu_count() * 4, backend="threading")
 
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.INFO)
@@ -876,6 +880,53 @@ class MonkeyWrench:
             print(f"{len(issues)} log(s) have issues:")
             for log_id, summary in issues.items():
                 print(f"\t{log_id}: {summary}")
+
+    def logs_without_pose(self) -> list[str]:
+        """Returns a list of log IDs that do not have a pose file."""
+        def has_poses(root, log_id):
+            uri = os.path.join(root, log_id, "all_poses.npz.lz4")
+            fs = fsspec.filesystem(urlparse(uri).scheme, anon=True)
+            return fs.exists(uri)
+
+        log_has_pose = self._over_pool(delayed(has_poses)(self._root, log_id) for log_id in self.all_logs)
+        return [log_id for log_id, has_pose in safe_zip(self.all_logs, log_has_pose) if not has_pose]
+
+    def one_off_copy_back_poses(self, backup_root: str):
+        log_ids_without_pose = self.logs_without_pose()
+        self._logger.info("Found %d logs without poses.", len(log_ids_without_pose))
+
+        backup_fs = fsspec.filesystem(urlparse(backup_root).scheme, anon=True)
+        # This can't be anonymous, as we actually need maintainer credentials to write to the bucket.
+        out_fs = fsspec.filesystem(urlparse(self._root).scheme)
+
+        for log_id in log_ids_without_pose:
+            source_uri = os.path.join(backup_root, log_id, "all_poses.npz.lz4")
+
+            target_uri = os.path.join(self._root, log_id, "all_poses.npz.lz4")
+
+            if not backup_fs.exists(source_uri):
+                source_uri = os.path.join(backup_root, log_id, "all_poses.npz.xz")
+                if not backup_fs.exists(source_uri):
+                    print("!!! Source file does not exist: %s", source_uri)
+
+            if out_fs.exists(target_uri):
+                print("!!! Target file already exists: %s", target_uri)
+
+            # LZMA specifically required for dealing with data backups. Long story.
+            import lzma
+            with backup_fs.open(source_uri, "rb") as compressed_f_in:
+                with out_fs.open(target_uri, "wb") as compressed_f_out:
+                    with lzma.open(compressed_f_in, "rb") as f_in:
+                        with lz4.frame.open(compressed_f_out, "wb") as f_out:
+                            self._logger.info("%s", source_uri)
+                            self._logger.info("%s", "vvvvvv".center(80, " "))
+                            self._logger.info("%s", target_uri)
+                            bts = f_in.read()
+                            f_out.write(bts)
+
+                self._logger.info("Write done.")
+
+        self._logger.info("Done.")
 
     def validate_log_report(self, log_id: str, check_receipt: bool = True, write_receipt: bool = True):
         log_root = os.path.join(self._root, log_id.lstrip("/"))
