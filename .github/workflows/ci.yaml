@@ -17,8 +17,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Check isort compliance
         uses: isort/isort-action@v1.0.0
-        with:
-            requirements-files: "requirements.txt requirements-test.txt"
       - name: Check formatting with black
         run: poetry run black --check --exclude '.*.bak.py' .
       # TODO(andrei): Enable once library is more mature.
