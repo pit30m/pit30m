@@ -15,6 +15,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+      - name: Check isort compliance
+        uses: isort/isort-action@v1.0.0
+        with:
+            requirements-files: "requirements.txt requirements-test.txt"
+      - name: Check formatting with black
+        run: poetry run black --check --exclude '.*.bak.py' .
+      # TODO(andrei): Enable once library is more mature.
+      # - name: Lint with pylint
+      #   run: poetry run pylint .
       - name: Cache Poetry cache
         uses: actions/cache@v3
         with:
@@ -34,15 +43,6 @@ jobs:
         run: |
           python -m pip install --upgrade poetry
           poetry install --with=dev
-      - name: Check isort compliance
-        uses: isort/isort-action@v1.0.0
-        with:
-            requirements-files: "requirements.txt requirements-test.txt"
-      - name: Check formatting with black
-        run: poetry run black --check --exclude '.*.bak.py' .
-      # TODO(andrei): Enable once library is more mature.
-      # - name: Lint with pylint
-      #   run: poetry run pylint .
       - name: Test with pytest
         run: |
           poetry run pytest
