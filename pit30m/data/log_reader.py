@@ -230,7 +230,7 @@ class LogReader:
             dtype=np.dtype(
                 [
                     ("time", np.float64),
-                    ("valid", np.bool),
+                    ("valid", bool),
                     ("submap_id", "|S32"),
                     ("x", np.float64),
                     ("y", np.float64),
