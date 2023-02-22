@@ -65,20 +65,42 @@ class LogReader:
 
         Specifically, using abstractions like pytorch DataLoaders can dramatically improve throughput, e.g., going from
         20-30 images per second to 100+.
+
+        Args:
+            log_root_uri: URI to the root of the log. This should be a directory containing a "cameras", "lidars", and other dirs
+            pose_fname: Name of the pose file. This is usually "all_poses.npz.lz4"
+            wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz.lz4"
+            map: Map object. If not provided, will try to load it from the log root
+            index_version: Version of the index to use. Currently only 0 is supported.
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
         self._wgs84_pose_fname = wgs84_pose_fname
-        if map is None:
-            # By default try to build map with data relative to the log root
-            log_parent = os.path.dirname(self._log_root_uri)
-            map = Map.from_submap_utm_uri(os.path.join(log_parent, "submap_utm.pkl"))
         self._map = map
+        # TODO(julieta) Semantic version this
         self._index_version = index_version
 
+    def __repr__(self) -> str:
+        return f"Pit30M Log Reader: {self._log_root_uri}"
+
     @property
-    def log_id(self) -> str:
-        return os.path.basename(self._log_root_uri)
+    def _map(self) -> Map:
+        # By default try to build map with data relative to the log root
+        map = self.__map
+        # NOTE(julieta) Do this lazily, as otherwise creating a lot of LogReaders is slow
+        if map is None:
+            log_parent = os.path.dirname(self._log_root_uri)
+            map = Map.from_submap_utm_uri(os.path.join(log_parent, "submap_utm.pkl"))
+        return map
+
+    @_map.setter
+    def _map(self, map: Map) -> None:
+        self.__map = map
+
+    @property
+    def log_id(self) -> UUID:
+        # TODO(julieta) make sure that this is a valid UUID
+        return UUID(os.path.basename(self._log_root_uri))
 
     @property
     def cam_root(self) -> str:
