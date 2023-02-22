@@ -7,4 +7,5 @@
     "[python]": {
         "editor.formatOnSave": true,
     },
+    "editor.rulers": [120]
 }

@@ -13,6 +13,7 @@ import fsspec
 import lz4
 import numpy as np
 import pandas as pd
+import utm
 from PIL import Image
 
 from pit30m.camera import CamName
@@ -43,6 +44,10 @@ class LiDARFrame:
 
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
+
+# NOTE(julieta) 17T or 17N are probably ok for PIT, commit to "T"
+UTM_ZONE_NUMBER = 17
+UTM_ZONE_LETTER = "T"
 
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
@@ -284,6 +289,19 @@ class LogReader:
         with self.fs.open(wgs84_fpath, "rb") as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 return np.load(wgs84_f)["data"]
+
+    @cached_property
+    def raw_wgs84_poses_as_utm(self) -> np.ndarray:
+        """Returns a N x 3 array of online (non-optimized) UTM poses, computed from raw WGS84 ones, @10Hz, ordered as
+        [timestamp, easting, northing].
+        """
+        wgs84 = self.raw_wgs84_poses
+        easting, northing, zn, zl = utm.from_latlon(
+            wgs84["latitude"], wgs84["longitude"], force_zone_letter=UTM_ZONE_LETTER, force_zone_number=UTM_ZONE_NUMBER
+        )
+        assert zn == UTM_ZONE_NUMBER, f"utm zone number is not {UTM_ZONE_NUMBER}"
+        assert zl == UTM_ZONE_LETTER, f"utm zone letter is not {UTM_ZONE_LETTER}"
+        return np.vstack([wgs84["timestamp"], easting, northing]).T
 
     @cached_property
     def raw_wgs84_poses_dense(self) -> np.ndarray:
