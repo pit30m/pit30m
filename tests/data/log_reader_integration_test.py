@@ -7,7 +7,7 @@ from pit30m.data.submap import DEFAULT_SUBMAP_INFO_PREFIX, Map
 
 @fixture(name="real_map")
 def _real_map() -> Map:
-    return Map.from_submap_utm_uri(f"s3://pit30m/{DEFAULT_SUBMAP_INFO_PREFIX}/")
+    return Map()
 
 
 @fixture(name="real_log_reader")

@@ -1,7 +1,11 @@
 {
     "python.formatting.provider": "black",
     "editor.formatOnSave": false,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true
+    },
     "[python]": {
         "editor.formatOnSave": true,
     },
+    "editor.rulers": [120]
 }

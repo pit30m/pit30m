@@ -1,7 +1,5 @@
-import csv
 import io
 import os
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property, lru_cache
@@ -13,6 +11,7 @@ import fsspec
 import lz4
 import numpy as np
 import pandas as pd
+import utm
 from PIL import Image
 
 from pit30m.camera import CamName
@@ -44,6 +43,10 @@ class LiDARFrame:
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
 
+# NOTE(julieta) 17T or 17N are probably ok for PIT, commit to "N"
+UTM_ZONE_NUMBER = 17
+UTM_ZONE_LETTER = "N"
+
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
     return gps_seconds_to_utc(gps_seconds).timestamp()
@@ -65,20 +68,28 @@ class LogReader:
 
         Specifically, using abstractions like pytorch DataLoaders can dramatically improve throughput, e.g., going from
         20-30 images per second to 100+.
+
+        Args:
+            log_root_uri: URI to the root of the log. This should be a directory containing a "cameras", "lidars", and other dirs
+            pose_fname: Name of the pose file. This is usually "all_poses.npz.lz4"
+            wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz.lz4"
+            map: Map object. If not provided, will try to load it from the log root
+            index_version: Version of the index to use. Currently only 0 is supported.
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
         self._wgs84_pose_fname = wgs84_pose_fname
-        if map is None:
-            # By default try to build map with data relative to the log root
-            log_parent = os.path.dirname(self._log_root_uri)
-            map = Map.from_submap_utm_uri(os.path.join(log_parent, "submap_utm.pkl"))
-        self._map = map
+        self._map = Map() if map is None else map
+        # TODO(julieta) Semantic version this
         self._index_version = index_version
 
+    def __repr__(self) -> str:
+        return f"Pit30M Log Reader: {self._log_root_uri}"
+
     @property
-    def log_id(self) -> str:
-        return os.path.basename(self._log_root_uri)
+    def log_id(self) -> UUID:
+        # TODO(julieta) make sure that this is a valid UUID
+        return UUID(os.path.basename(self._log_root_uri))
 
     @property
     def cam_root(self) -> str:
@@ -262,6 +273,19 @@ class LogReader:
         with self.fs.open(wgs84_fpath, "rb") as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 return np.load(wgs84_f)["data"]
+
+    @cached_property
+    def raw_wgs84_poses_as_utm(self) -> np.ndarray:
+        """Returns a N x 3 array of online (non-optimized) UTM poses, computed from raw WGS84 ones, @10Hz, ordered as
+        [timestamp, easting, northing].
+        """
+        wgs84 = self.raw_wgs84_poses
+        easting, northing, zn, zl = utm.from_latlon(
+            wgs84["latitude"], wgs84["longitude"], force_zone_letter=UTM_ZONE_LETTER, force_zone_number=UTM_ZONE_NUMBER
+        )
+        assert zn == UTM_ZONE_NUMBER, f"utm zone number is not {UTM_ZONE_NUMBER}"
+        assert zl == UTM_ZONE_LETTER, f"utm zone letter is not {UTM_ZONE_LETTER}"
+        return np.vstack([wgs84["timestamp"], easting, northing]).T
 
     @cached_property
     def raw_wgs84_poses_dense(self) -> np.ndarray:
