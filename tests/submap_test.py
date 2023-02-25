@@ -1,4 +1,5 @@
 import uuid
+from uuid import UUID
 
 import numpy as np
 import pytest
@@ -6,25 +7,23 @@ import pytest
 from pit30m.data.submap import Map
 
 
-@pytest.fixture(name="dummy_submap_to_utm")
-def _dummy_submap_to_utm():
-    return {
-        "a": (0, 0),
-        "b": (10, 10),
-        "c": (20, 20),
-    }
+def test_singleton():
+    map_instance_1 = Map()
+    map_instance_2 = Map()
+    np.testing.assert_(map_instance_1 is map_instance_2)
 
 
-@pytest.fixture(name="dummy_real_submap_to_utm")
-def _dummy_real_submap_to_utm():
-    return {
-        # D. L. Pratt Building at UofT
-        uuid.uuid3(uuid.NAMESPACE_URL, "pratt"): (632315.689399, 4821086.845690),
-    }
+def test_utm():
+    map = Map()
 
-
-def test_utm(dummy_submap_to_utm):
-    map = Map(submap_to_utm=dummy_submap_to_utm)
+    fake_submap_ids = [
+        UUID("c343709f-f520-41c8-c626-01df08b26100"),
+        UUID("c343709f-f520-41c8-c626-01df08b26101"),
+        UUID("c343709f-f520-41c8-c626-01df08b26102"),
+    ]
+    map._submap_to_utm[fake_submap_ids[0]] = (0, 0)
+    map._submap_to_utm[fake_submap_ids[1]] = (10, 10)
+    map._submap_to_utm[fake_submap_ids[2]] = (20, 20)
 
     fake_poses = np.array(
         [
@@ -33,7 +32,6 @@ def test_utm(dummy_submap_to_utm):
             [-2, 0.3],
         ]
     )
-    fake_submap_ids = ["a", "b", "c"]
 
     utm_coords = map.to_utm(fake_poses, fake_submap_ids)
     np.testing.assert_allclose(
@@ -48,8 +46,8 @@ def test_utm(dummy_submap_to_utm):
     )
 
 
-def test_wgs84(dummy_real_submap_to_utm):
-    map = Map(submap_to_utm=dummy_real_submap_to_utm)
+def test_wgs84():
+    map = Map()
 
     fake_poses = np.array(
         [
@@ -57,6 +55,7 @@ def test_wgs84(dummy_real_submap_to_utm):
         ]
     )
     fake_submap_ids = [uuid.uuid3(uuid.NAMESPACE_URL, "pratt")]
+    map._submap_to_utm[fake_submap_ids[0]] = (632315.689399, 4821086.845690)
 
     wgs84_coords = map.to_wgs84(fake_poses, fake_submap_ids)
     # GT computed using epsg.io

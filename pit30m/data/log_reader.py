@@ -1,7 +1,5 @@
-import csv
 import io
 import os
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property, lru_cache
@@ -45,9 +43,9 @@ class LiDARFrame:
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
 
-# NOTE(julieta) 17T or 17N are probably ok for PIT, commit to "T"
+# NOTE(julieta) 17T or 17N are probably ok for PIT, commit to "N"
 UTM_ZONE_NUMBER = 17
-UTM_ZONE_LETTER = "T"
+UTM_ZONE_LETTER = "N"
 
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
@@ -81,26 +79,12 @@ class LogReader:
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
         self._wgs84_pose_fname = wgs84_pose_fname
-        self._map = map
+        self._map = Map() if map is None else map
         # TODO(julieta) Semantic version this
         self._index_version = index_version
 
     def __repr__(self) -> str:
         return f"Pit30M Log Reader: {self._log_root_uri}"
-
-    @property
-    def _map(self) -> Map:
-        # By default try to build map with data relative to the log root
-        map = self.__map
-        # NOTE(julieta) Do this lazily, as otherwise creating a lot of LogReaders is slow
-        if map is None:
-            log_parent = os.path.dirname(self._log_root_uri)
-            map = Map.from_submap_utm_uri(os.path.join(log_parent, "submap_utm.pkl"))
-        return map
-
-    @_map.setter
-    def _map(self, map: Map) -> None:
-        self.__map = map
 
     @property
     def log_id(self) -> UUID:

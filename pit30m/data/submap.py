@@ -1,11 +1,10 @@
+import os
 import pickle as pkl
-from typing import Mapping, Tuple
+from typing import Mapping, Optional, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 
-import fsspec
 import numpy as np
-from joblib import Memory
 from pyproj import CRS, Transformer
 
 # See: https://epsg.io/32617
@@ -14,24 +13,18 @@ WGS84_CODE = 4326
 DEFAULT_SUBMAP_INFO_PREFIX = "submap_utm.pkl"
 
 
-memory = Memory(location="/tmp/pit30m", verbose=0)
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
 
 
-class Map:
-    @staticmethod
-    @memory.cache()
-    def from_submap_utm_uri(uri: str) -> "Map":
-        """Loads a submap index from the given URI."""
-        fs = fsspec.filesystem(urlparse(uri).scheme, anon=True)
-        with fs.open(uri, "rb") as f:
-            submap_utm = pkl.load(f)
-
-        # Store actual UUID objects for efficiency
-        submap_to_utm = {UUID(submap_id): utm_coords for submap_id, utm_coords in submap_utm.items()}
-        return Map(submap_to_utm=submap_to_utm)
-
-    def __init__(self, submap_to_utm: Mapping[UUID, Tuple[float, float]]):
-        """Represents the Pit30M topometric map.
+class Map(metaclass=Singleton):
+    def __init__(self):
+        """Singleton that represents the Pit30M topometric map.
 
         To get a "global" pose from a log pose, you need to take its map-relative pose, and then compose that with the
         map's UTM coordinates.
@@ -54,10 +47,15 @@ class Map:
 
         If you believe this interferes with a specific use case you had in mind, please don't hesitate to contact
         Andrei Barsan or any of the benchmark and SDK maintainers and we will be happy to help!
-
-        TODO(andrei): Should we bundle this info in the devkit itself for fast retrieval? It should be pretty tiny.
-        At the very least we should cache it somewhere like in "~/.cache/pit30m".
         """
+
+        # NOTE(julieta): We've bundled this with the codebase because it is very small < 200 KB.
+        # We also have a copy under s3://pit30m-data/submap_utm.pkl
+        fpath = os.path.join(os.path.dirname(__file__), "submap_utm.pkl")
+        with open(fpath, "rb") as f:
+            submap_utm = pkl.load(f)
+
+        submap_to_utm = {UUID(submap_id): utm_coords for submap_id, utm_coords in submap_utm.items()}
         self._submap_to_utm = submap_to_utm
 
         # Construct the projection object which takes UTM coordinates and converts them into WGS84 (lat, lon).
@@ -92,7 +90,6 @@ class Map:
 
         Returns:
             An (N, 2) array of WGS84 (lat, lon).
-
         """
         utm_poses = self.to_utm(map_poses, submap_ids)
         # 20x faster than manually looping over the coords in Python
