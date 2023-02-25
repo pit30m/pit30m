@@ -7,20 +7,18 @@ import multiprocessing as mp
 import os
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from functools import cached_property
 from typing import List, Optional, Tuple, Union
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
+from uuid import UUID
 
 import fire
 import fsspec
-import ipdb
 import lz4
 import numpy as np
 import yaml
 from joblib import Memory, Parallel, delayed
-from PIL import Image
 from tqdm import tqdm
 
 from pit30m.camera import CamName
@@ -212,10 +210,10 @@ class MonkeyWrench:
         self._logger.addHandler(handler)
 
     @cached_property
-    def all_logs(self) -> List[str]:
+    def all_logs(self) -> List[UUID]:
         """Return a list of all log IDs."""
         with open(self._log_list_fpath, "r") as f:
-            return [line.strip() for line in f]
+            return [UUID(line.strip()) for line in f]
 
     @cached_property
     def map(self) -> Map:
