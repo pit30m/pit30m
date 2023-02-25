@@ -2,7 +2,6 @@ import uuid
 from uuid import UUID
 
 import numpy as np
-import pytest
 
 from pit30m.data.submap import Map
 
