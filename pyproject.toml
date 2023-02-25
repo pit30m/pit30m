@@ -5,33 +5,49 @@ description = "Development kit for the Aurora Multi-Sensor Dataset (aka Pit30M).
 authors = ["Andrei Bârsan"]
 license = "MIT"
 readme = "README.md"
+classifiers = [
+    "Framework :: Robot Framework :: Library",
+    "Framework :: Robot Framework :: Tool",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
 
 [tool.poetry.dependencies]
 python = "^3.10"
-fsspec = "2023.1.0"
-s3fs = "^2023.1.0"
-geopandas = "^0.12.2"
+fsspec = "^2022"
+s3fs = "^2022"
+geopandas = "^0.12"
 pygeos = "^0.14"
-numpy = "^1.24.2"
-fire = "^0.5.0"
-joblib = "^1.2.0"
-pillow = "^9.4.0"
-tqdm = "^4.64.1"
-lz4 = "^4.3.2"
-matplotlib = "^3.7.0"
+numpy = "^1.24"
+fire = "^0.5"
+joblib = "^1"
+pillow = "^9"
+tqdm = "^4"
+lz4 = "^4.3"
+matplotlib = "^3.7"
 pyyaml = "^6.0"
 utm = "^0.7.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.1.0"
+pytest = "^7"
 pytest-mock = "*"
-ipdb = "^0.13.11"
-black = "^23.1.0"
-pytest-xdist = "^3.2.0"
+ipdb = "^0.13"
+black = "^23.1"
+pytest-xdist = "^3.2"
 # TODO(andrei): Special group and special build for these optional deps.
-torch = "^1.13.1"
-torchdata = "^0.5.1"
-pylint = "^2.16.2"
+torch = "^1.13"
+torchdata = "^0.5"
+pylint = "^2.16"
+boto3 = "^1"
 
 [build-system]
 requires = ["poetry-core"]
