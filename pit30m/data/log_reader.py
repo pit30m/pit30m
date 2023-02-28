@@ -125,7 +125,7 @@ class LogReader:
             return pd.read_csv(f)
 
     @lru_cache(maxsize=16)
-    def get_cam_geo_index(self, cam_name: str) -> np.ndarray:
+    def get_cam_geo_index(self, cam_name: CamName) -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE."""
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
         if not self.fs.exists(index_fpath):
