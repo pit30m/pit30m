@@ -22,7 +22,7 @@ classifiers = [
 
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.9"
 fsspec = "^2022"
 s3fs = "^2022"
 geopandas = "^0.12"

@@ -117,12 +117,12 @@ class LogReader:
         WARNING: 'rel_path' entries in indexes may be padded with spaces on the right since they are fixed-width
         strings. If you need to use them directly, make sure you use `.strip()` to remove the spaces.
         """
-        index_fpath = os.path.join(self.lidar_root, "index", "wgs84.csv")
+        index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version}.npz")
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
-        with self.fs.open(index_fpath, "r") as f:
-            return pd.read_csv(f)
+        with self.fs.open(index_fpath, "rb") as f:
+            return np.load(f)["index"]
 
     @lru_cache(maxsize=16)
     def get_cam_geo_index(self, cam_name: CamName) -> np.ndarray:
