@@ -341,8 +341,11 @@ class LogReader:
         for row_index in range(start, len(index), step):
             yield self.get_image(cam_name, row_index)
 
-    def get_lidar(self, rel_path: str) -> LiDARFrame:
+    def get_lidar(self, idx: int) -> LiDARFrame:
         """Loads the LiDAR scan for the given relative path, used in torch data loading."""
+        index_entry = self.get_lidar_geo_index()[idx]
+        # TODO(julieta) re-dump the indices so that they include the correct path
+        rel_path = index_entry["rel_path"].strip() + "z.lz4"
         fpath = os.path.join(self.lidar_root, rel_path)
         with self.fs.open(fpath, "rb") as f_compressed:
             with lz4.frame.open(f_compressed, "rb") as f:
