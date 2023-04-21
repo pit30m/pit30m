@@ -43,7 +43,7 @@ def open3d_many_sweeps_example(self, log_root_uri: str) -> None:
     # dbp = urlparse(dataset_base)
 
     lr = LogReader(log_root_uri)
-    fs = fsspec.filesystem(urlparse(log_root_uri).scheme)
+    fs = fsspec.filesystem(urlparse(log_root_uri).scheme, anon=True)
 
     with mp.Pool(processes=mp.cpu_count() - 1) as pool:
         for lid_dir in fs.ls(ld):

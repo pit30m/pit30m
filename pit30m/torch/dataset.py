@@ -6,8 +6,15 @@ from uuid import UUID
 
 import fire
 import numpy as np
-import torch.multiprocessing as mp
-from torch.utils.data import DataLoader, Dataset
+
+try:
+    import torch.multiprocessing as mp
+    from torch.utils.data import DataLoader, Dataset
+except ImportError as err:
+    raise ImportError(
+        "PyTorch is required to import PyTorch Pit30M functionality. Please install PyTorch and try again."
+    ) from err
+
 
 from pit30m.camera import CamName
 from pit30m.data.log_reader import CameraImage, LiDARFrame, LogReader
