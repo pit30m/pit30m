@@ -57,9 +57,15 @@ Package development, testing, and releasing is performed with `poetry`. If you j
  3. Develop away
     - run commands like `poetry run python -m pit30m.cli`
  4. Test with `poetry run pytest`
+ 5. Remember to run `poetry install` after pulling and/or updating dependencies.
 
 
 Note that in the pre-release time, `torch` will be a "dev" dependency, since it's necessary for all tests to pass.
+
+## Publishing
+
+ 1. [Configure poetry](https://www.digitalocean.com/community/tutorials/how-to-publish-python-packages-to-pypi-using-poetry-on-ubuntu-22-04) with a PyPI account which has access to edit the package. You need to make sure poetry is configured with your API key.
+ 2. `poetry publish --build`
 
 
 ## Citation

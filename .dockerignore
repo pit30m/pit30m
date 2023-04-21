@@ -3,7 +3,7 @@
 build
 dist
 
-.ipynb_checkpoints/*
+**/.ipynb_checkpoints/*
 ./download/*
 notebooks/
 .pytest_cache/

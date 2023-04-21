@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "pit30m"
-version = "0.1.0"
-description = "Development kit for the Pit30M dataset"
+version = "0.0.7"
+description = "Development kit for the Pit30M large scale localization dataset"
 authors = ["Andrei Bârsan"]
 license = "MIT"
 readme = "README.md"
@@ -17,25 +17,29 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Software Development",
     "Topic :: Software Development :: Libraries",
-    "Topic :: Software Development :: Libraries :: Python Modules"
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
 ]
 
+[project.urls]
+"Homepage" = "https://github.com/pit30m/pit30m"
 
 [tool.poetry.dependencies]
 python = "^3.9"
-fsspec = "^2022"
-s3fs = "^2022"
-geopandas = "^0.12"
-pygeos = "^0.14"
-numpy = "^1.24"
-fire = "^0.5"
-joblib = "^1"
-pillow = "^9"
-tqdm = "^4"
-lz4 = "^4.3"
-matplotlib = "^3.7"
-pyyaml = "^6.0"
-utm = "^0.7.0"
+fsspec = ">=2022"
+s3fs = "*"
+geopandas = ">=0.10"
+pygeos = ">=0.12"
+numpy = ">=1.20"
+fire = ">=0.5"
+joblib = "*"
+pillow = ">=9"
+tqdm = ">=4"
+lz4 = ">=4"
+matplotlib = ">=3.4"
+pyyaml = ">=5"
+utm = ">=0.7.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7"
