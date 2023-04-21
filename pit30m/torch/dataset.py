@@ -17,8 +17,7 @@ from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 
 class Pit30MLogDataset(Dataset):
     def __init__(
-        self, log_ids: Sequence[str], cam_name: CamName = CamName.MIDDLE_FRONT_WIDE,
-        root_uri: str = "s3://pit30m/"
+        self, log_ids: Sequence[str], cam_name: CamName = CamName.MIDDLE_FRONT_WIDE, root_uri: str = "s3://pit30m/"
     ) -> None:
         """A low-level interface dataset for Pit30M operating on a per-log single-sensor basis.
 

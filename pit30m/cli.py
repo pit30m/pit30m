@@ -33,7 +33,10 @@ class Pit30MCLI:
         print("bow wow")
 
     def multicam_demo(
-        self, out_dir: str, log_id: str = "e9511854-f657-47bd-c9d3-047187cfc663", chunks: Union[int, tuple[int]] = (17, 18)
+        self,
+        out_dir: str,
+        log_id: str = "e9511854-f657-47bd-c9d3-047187cfc663",
+        chunks: Union[int, tuple[int]] = (17, 18),
     ) -> None:
         """Bakes a multicam video from a log URI. Requires `ffmpeg` to be installed.
 
