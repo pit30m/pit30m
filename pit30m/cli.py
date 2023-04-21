@@ -1,11 +1,10 @@
 import multiprocessing as mp
 import os
 import shlex
-import shutil
 import subprocess
 import tempfile
 from functools import cached_property
-from typing import Tuple, Union
+from typing import Union
 from urllib.parse import urlparse
 
 import fire
@@ -28,9 +27,6 @@ class Pit30MCLI:
         """Return a list of all log IDs in the dataset."""
         with open(self._log_list_fpath, "r") as f:
             return [line.strip() for line in f]
-
-    def woof(self):
-        print("bow wow")
 
     def multicam_demo(
         self,
