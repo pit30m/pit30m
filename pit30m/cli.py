@@ -40,7 +40,7 @@ class Pit30MCLI:
 
         TODO(andrei): Port to use the log reader.
         """
-        in_fs = fsspec.filesystem(urlparse(self._data_root).scheme)
+        in_fs = fsspec.filesystem(urlparse(self._data_root).scheme, anon=True)
         out_fs = fsspec.filesystem(urlparse(out_dir).scheme)
         if isinstance(chunks, int):
             chunks = chunks
