@@ -17,9 +17,10 @@ from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 
 class Pit30MLogDataset(Dataset):
     def __init__(
-        self, root_uri: str, log_ids: Sequence[str], submap_utm_uri: str, cam_name: CamName = CamName.MIDDLE_FRONT_WIDE
+        self, log_ids: Sequence[str], cam_name: CamName = CamName.MIDDLE_FRONT_WIDE,
+        root_uri: str = "s3://pit30m/"
     ) -> None:
-        """A low-level interface dataset for Pit30M operating on a per-log basis.
+        """A low-level interface dataset for Pit30M operating on a per-log single-sensor basis.
 
         Somewhat inefficient due to limitations in PyTorch when it comes to high-throughput high-latency data sources,
         please see [@svogor2022profiling] for a related analysis.
@@ -32,13 +33,10 @@ class Pit30MLogDataset(Dataset):
         self._cam_name = cam_name
         self._root_uri = root_uri
         self._log_ids = log_ids
-        self._submap_utm_uri = submap_utm_uri
-
-        # print(f"Loading {len(log_ids)} indexes...")
 
     @cached_property
     def _map(self):
-        return Map.from_submap_utm_uri(self._submap_utm_uri)
+        return Map()
 
     @cached_property
     def _log_readers(self):
@@ -108,18 +106,18 @@ def demo_dataloader(
     batch_size: int = 32,
     num_workers: int = 8,
     max_batches: int = 25,
-    submap_utm_uri: str = "s3://pit30m/submap_utm.pkl",
 ):
+    # Failure to do this may cause fsspec to hang in workers
+    mp.set_start_method("forkserver")
+
     if isinstance(logs, str):
         logs = [entry.strip() for entry in logs.split(",")]
-    # Failure to do this causes fsspec to hang in workers
-    # mp.set_start_method("forkserver")
 
     logs = [UUID(log) for log in logs]
 
     print("root_uri", root_uri)
     print("logs:", logs)
-    dataset = Pit30MLogDataset(root_uri, logs, submap_utm_uri=submap_utm_uri)
+    dataset = Pit30MLogDataset(logs, root_uri=root_uri)
     loader = DataLoader(
         # No shuffle for demo/benchmarking purposes.
         dataset=dataset,
