@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pit30m"
-version = "0.0.7"
+version = "0.0.1"
 description = "Development kit for the Pit30M large scale localization dataset"
 authors = ["Andrei Bârsan"]
 license = "MIT"
