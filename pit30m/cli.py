@@ -1,11 +1,10 @@
 import multiprocessing as mp
 import os
 import shlex
-import shutil
 import subprocess
 import tempfile
 from functools import cached_property
-from typing import Tuple, Union
+from typing import Union
 from urllib.parse import urlparse
 
 import fire
@@ -29,11 +28,11 @@ class Pit30MCLI:
         with open(self._log_list_fpath, "r") as f:
             return [line.strip() for line in f]
 
-    def woof(self):
-        print("bow wow")
-
     def multicam_demo(
-        self, dataset_base: str, log_uri: str, out_dir: str, chunks: Union[int, tuple[int]] = (16, 17)
+        self,
+        out_dir: str,
+        log_id: str = "e9511854-f657-47bd-c9d3-047187cfc663",
+        chunks: Union[int, tuple[int]] = (17, 18),
     ) -> None:
         """Bakes a multicam video from a log URI. Requires `ffmpeg` to be installed.
 
@@ -41,7 +40,7 @@ class Pit30MCLI:
 
         TODO(andrei): Port to use the log reader.
         """
-        in_fs = fsspec.filesystem(urlparse(dataset_base).scheme)
+        in_fs = fsspec.filesystem(urlparse(self._data_root).scheme, anon=True)
         out_fs = fsspec.filesystem(urlparse(out_dir).scheme)
         if isinstance(chunks, int):
             chunks = chunks
@@ -58,7 +57,7 @@ class Pit30MCLI:
         video_fpaths = []
         with tempfile.TemporaryDirectory() as tmp_dir:
             for cam in cams_clockwise:
-                ld = dataset_base + log_uri + "/cameras/" + cam
+                ld = self._data_root + log_id + "/cameras/" + cam
 
                 sample_img_uris = [
                     entry
@@ -89,12 +88,14 @@ class Pit30MCLI:
 
             # Stack the resulting videos horizontally with ffmpeg
             print(video_fpaths)
+            out_fpath = f"{out_dir}/{log_id}-sample-multicam.mp4"
             subprocess.run(
                 shlex.split(
                     f"ffmpeg -i {' -i '.join(video_fpaths)} -filter_complex hstack=inputs={len(video_fpaths)} "
-                    f"{out_dir}/{log_uri}-sample-multicam.mp4"
+                    f"{out_fpath}"
                 )
             )
+            print("Generated video to:", out_fpath)
 
 
 # Opposite of zip

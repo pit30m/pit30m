@@ -17,8 +17,11 @@ def cached_glob(
     fs: Optional[fsspec.AbstractFileSystem] = None,
 ) -> list[str]:
     scheme = urlparse(root_dir).scheme
+    storage_options = {}
+    if scheme == "s3":
+        storage_options["anon"] = True
     if fs is None:
-        fs = fsspec.filesystem(scheme)
+        fs = fsspec.filesystem(scheme, **storage_options)
     entries = sorted(fs.glob(os.path.join(root_dir, "*", "*" + extension)))
     if scheme is None or 0 == len(scheme):
         return entries
