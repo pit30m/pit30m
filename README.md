@@ -1,8 +1,8 @@
 # Pit30M Development Kit
 
-<!-- TODO(andrei): Add PyPI versions. -->
 [![Python CI Status](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+![PyPI](https://img.shields.io/pypi/v/pit30m)
 [![Public on the AWS Open Data Registry](https://shields.io/badge/Open%20Data%20Registry-public-green?logo=amazonaws&style=flat)](#)
 
 ## Overview
@@ -66,7 +66,7 @@ Package development, testing, and releasing is performed with `poetry`. If you j
 
 Note that in the pre-release time, `torch` will be a "dev" dependency, since it's necessary for all tests to pass.
 
-## Publishing
+### Publishing
 
  1. [Configure poetry](https://www.digitalocean.com/community/tutorials/how-to-publish-python-packages-to-pypi-using-poetry-on-ubuntu-22-04) with a PyPI account which has access to edit the package. You need to make sure poetry is configured with your API key.
  2. `poetry publish --build`
@@ -84,3 +84,18 @@ Note that in the pre-release time, `torch` will be a "dev" dependency, since it'
   organization={IEEE}
 }
 ```
+
+## Additional Details
+
+### Images
+
+#### Compression
+The images in the dataset are stored using lossy WebP compression at quality level 85. We picked this as a sweet spot between space- and network-bandwidth-saving (about 10x smaller than equivalent PNGs) and maintaining very good image quality for tasks such as SLAM, 3D reconstruction, and visual localization. The images were saved using `Pillow 9.2.0`.
+
+The `s3://pit30m/raw` prefix contains lossless image data for a small subset of the logs present in the bucket root. This can be used as a reference by those curious in understanding which artifacts are induced by the lossy compression, and which are inherent in the raw data.
+
+#### Known Issues
+
+A fraction of the images in the dataset exhibit artifacts such as a strong purple tint or missing data (white images). An even smaller fraction of these purple images sometimes shows strong blocky compression artifacts. These represent a known (and, at this scale, difficult to avoid) problem; it was already present in the original raw logs from which we generated the public facing benchmark. Perfectly blank images can be detected quite reliably in a data loader or ETL script by checking whether `np.mean(img) > 250`.
+
+On example of a log with many blank (whiteout) images is `8438b1ba-44e2-4456-f83b-207351a99865`.
