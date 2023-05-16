@@ -1,20 +1,25 @@
 import io
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from enum import Enum
 from functools import cached_property, lru_cache
-from typing import Iterator
+from typing import Iterator, Optional, Set, Union
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
 import lz4
 import numpy as np
-import pandas as pd
 import utm
 from PIL import Image
 
 from pit30m.camera import CamName
+from pit30m.data.partitions import (
+    GeoPartition,
+    PreProcessPartition,
+    QueryBasePartition,
+    SizePartition,
+)
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
 
@@ -60,6 +65,7 @@ class LogReader:
         wgs84_pose_fname: str = "wgs84.npz.lz4",
         map: Map = None,
         index_version: int = 0,
+        partitions: Optional[Union[Set[Enum], Enum]] = {PreProcessPartition},
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -75,6 +81,7 @@ class LogReader:
             wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz.lz4"
             map: Map object. If not provided, will try to load it from the log root
             index_version: Version of the index to use. Currently only 0 is supported.
+            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
@@ -83,8 +90,27 @@ class LogReader:
         # TODO(julieta) Semantic version this
         self._index_version = index_version
 
+        if partitions is None:
+            self.partitions = set()
+        else:
+            all_partitions = {
+                PreProcessPartition,
+                GeoPartition,
+                QueryBasePartition,
+                SizePartition,
+            }
+            assert partitions.issubset(
+                all_partitions
+            ), f"Invalid partitions: {partitions}"
+            self.partitions = partitions
+            # self.filtered_indices = self.compute_partition_filters()
+
     def __repr__(self) -> str:
         return f"Pit30M Log Reader: {self._log_root_uri}"
+
+    @cached_property
+    def preprocess_partition(self):
+        return self.partitions[PreProcessPartition]
 
     @property
     def log_id(self) -> UUID:
@@ -110,6 +136,18 @@ class LogReader:
         """Filesystem object used to read log data."""
         return fsspec.filesystem(urlparse(self._log_root_uri).scheme, anon=True)
 
+    @lru_cache(maxsize=4)
+    def get_partition_assigments(self, partition="size"):
+        """Returns a list of partition names for this log."""
+        index_fpath = os.path.join(
+            f"s3://pit30m/partitions/{partition}/{self.log_id}.npz"
+        )
+        if not self.fs.exists(index_fpath):
+            raise ValueError(f"Partition file not found: {index_fpath}!")
+
+        with self.fs.open(index_fpath, "rb") as f:
+            return np.load(f)["partition"]
+
     @lru_cache(maxsize=16)
     def get_lidar_geo_index(self):
         """Returns a lidar index of dtype LIDAR_INDEX_V0_0_DTYPE.
@@ -117,7 +155,9 @@ class LogReader:
         WARNING: 'rel_path' entries in indexes may be padded with spaces on the right since they are fixed-width
         strings. If you need to use them directly, make sure you use `.strip()` to remove the spaces.
         """
-        index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version}.npz")
+        index_fpath = os.path.join(
+            self.lidar_root, "index", f"index_v{self._index_version}.npz"
+        )
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
@@ -127,7 +167,9 @@ class LogReader:
     @lru_cache(maxsize=16)
     def get_cam_geo_index(self, cam_name: CamName) -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE."""
-        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
+        index_fpath = os.path.join(
+            self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz"
+        )
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
@@ -263,7 +305,10 @@ class LogReader:
         mrp = self.map_relative_poses_dense
         xyzs = np.stack((mrp["x"], mrp["y"], mrp["z"]), axis=1)
         # Handle submap IDs which were truncated upon encoded due to ending with a zero.
-        submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
+        submaps = [
+            UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00"))
+            for submap_uuid_bytes in mrp["submap_id"]
+        ]
         return self._map.to_utm(xyzs, submaps)
 
     @cached_property
@@ -281,7 +326,10 @@ class LogReader:
         """
         wgs84 = self.raw_wgs84_poses
         easting, northing, zn, zl = utm.from_latlon(
-            wgs84["latitude"], wgs84["longitude"], force_zone_letter=UTM_ZONE_LETTER, force_zone_number=UTM_ZONE_NUMBER
+            wgs84["latitude"],
+            wgs84["longitude"],
+            force_zone_letter=UTM_ZONE_LETTER,
+            force_zone_number=UTM_ZONE_NUMBER,
         )
         assert zn == UTM_ZONE_NUMBER, f"utm zone number is not {UTM_ZONE_NUMBER}"
         assert zl == UTM_ZONE_LETTER, f"utm zone letter is not {UTM_ZONE_LETTER}"
@@ -334,7 +382,9 @@ class LogReader:
                 shutter_time_s=index_entry["shutter_s"],
             )
 
-    def camera_iterator(self, cam_name: CamName, start: int = 0, step: int = 1) -> Iterator[CameraImage]:
+    def camera_iterator(
+        self, cam_name: CamName, start: int = 0, step: int = 1
+    ) -> Iterator[CameraImage]:
         assert start >= 0
         assert step > 0
         index = self.get_cam_geo_index(cam_name)
