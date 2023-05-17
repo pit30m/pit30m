@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import os
+from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Iterable, Union
+from typing import Dict, Iterable, Tuple, Union
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -13,12 +16,21 @@ class PreProcessPartition(Enum):
     VALID = True
     INVALID = False
 
+    @staticmethod
+    def value_to_index(val: PreProcessPartition.value, index: np.ndarray) -> int:
+        return index == val.value
 
-# Geograohic partition into train/val/test
+
+# Geographic partition into train/val/test
 class GeoPartition(Enum):
     TRAIN = 0
     VAL = 1
     TEST = 2
+    # Some values migth be NaN, meaning they are outside the three geopartitions
+
+    @staticmethod
+    def value_to_index(val: GeoPartition.value, index: np.ndarray) -> int:
+        return index == val.value
 
 
 # Query/base partitioning for retrieval/based localization
@@ -26,12 +38,25 @@ class QueryBasePartition(Enum):
     QUERY = 0
     BASE = 1
 
+    @staticmethod
+    def value_to_index(val: QueryBasePartition.value, index: np.ndarray) -> int:
+        return index == val.value
+
 
 # Size partitioning for mid/tiny/full
 class SizePartition(Enum):
     TINY = 0
     MID = 1
     FULL = 2
+
+    @staticmethod
+    def value_to_index(val: SizePartition.value, index: np.ndarray) -> int:
+        if val == SizePartition.FULL:
+            return np.full(len(index), True)
+        elif val == SizePartition.MID:
+            return np.logical_or(index == SizePartition.MID.value, index == SizePartition.FULL.value)
+        elif val == SizePartition.TINY:
+            return index == val.value
 
 
 PARTITION_TO_NAME = {
@@ -61,3 +86,19 @@ def fetch_partitions(
             partitions[partition] = np.load(f)["partition"]
 
     return partitions
+
+
+def combine_partitions(
+    partititons_dict: Dict[
+        Union[PreProcessPartition, GeoPartition, QueryBasePartition, SizePartition], Tuple[np.ndarray, Enum.value]
+    ]
+) -> np.ndarray:
+    """Converts a bunch of partitions to a single boolean index that can be used for filtering in the logreader"""
+
+    indices = []
+    for partition, (index, value) in partititons_dict.items():
+        processes_index = partition.value_to_index(value, index)
+        indices.append(processes_index)
+
+    combined_indices = np.logical_and.reduce(indices)
+    return combined_indices
