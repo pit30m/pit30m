@@ -1,9 +1,8 @@
 import io
 import os
 from dataclasses import dataclass
-from enum import Enum
 from functools import cached_property, lru_cache
-from typing import Any, Dict, Iterator, Optional, Set
+from typing import Iterator, Optional, Set
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -60,7 +59,7 @@ class LogReader:
         wgs84_pose_fname: str = "wgs84.npz.lz4",
         map: Map = None,
         index_version: int = 0,
-        partitions: Set[PartitionEnum] = None,
+        partitions: Optional[Set[PartitionEnum]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -98,12 +97,12 @@ class LogReader:
             return np.full(n_sensor_measurements, True)
 
         # Fetch the indices from s3
-        dir = "s3://pit30m/partitions/"
-        fs = fsspec.filesystem(urlparse(dir).scheme, anon=True)
+        partitions_basepath = "s3://pit30m/partitions/"
+        fs = fsspec.filesystem(urlparse(partitions_basepath).scheme, anon=True)
 
         partition_indices = tuple()
         for partition in self.partitions:
-            partition_fpath = os.path.join(dir, partition.path_name, f"{self.log_id}.npz")
+            partition_fpath = os.path.join(partitions_basepath, partition.path_name, f"{self.log_id}.npz")
             if not fs.exists(partition_fpath):
                 raise ValueError(f"Partition file not found: {partition_fpath}")
 

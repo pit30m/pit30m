@@ -2,12 +2,7 @@ from pytest import fixture
 
 from pit30m.camera import CamName
 from pit30m.data.log_reader import LogReader
-from pit30m.data.partitions import (
-    GeoPartition,
-    PreProcessPartition,
-    QueryBasePartition,
-    SizePartition,
-)
+from pit30m.data.partitions import GeoPartition, PreProcessPartition, QueryBasePartition
 from pit30m.data.submap import DEFAULT_SUBMAP_INFO_PREFIX, Map
 
 

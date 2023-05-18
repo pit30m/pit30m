@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import os
-from abc import ABC, abstractmethod, abstractproperty
+from abc import abstractmethod
 from enum import Enum
-from typing import Dict, Iterable, Set, Tuple
-from urllib.parse import urlparse
-from uuid import UUID
 
-import fsspec
 import numpy as np
 
 
@@ -17,7 +12,8 @@ class PartitionEnum(Enum):
     def value_to_index(val: PartitionEnum, index: np.ndarray) -> int:
         ...
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def path_name(self) -> str:
         ...
 
@@ -80,10 +76,12 @@ class SizePartition(PartitionEnum):
         assert isinstance(val, SizePartition), f"val must be a SizePartition, not {type(val)=}"
         if val == SizePartition.FULL:
             return np.full(len(index), True)
-        elif val == SizePartition.MID:
+        if val == SizePartition.MID:
             return np.logical_or(index == SizePartition.MID.value, index == SizePartition.FULL.value)
-        elif val == SizePartition.TINY:
+        if val == SizePartition.TINY:
             return index == val.value
+
+        raise ValueError(f"Invalid value for SizePartition: {val=}")
 
     @property
     def path_name(self) -> str:
