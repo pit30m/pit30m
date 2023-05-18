@@ -14,7 +14,7 @@ import utm
 from PIL import Image
 
 from pit30m.camera import CamName
-from pit30m.data.partitions import combine_partitions, fetch_partitions
+from pit30m.data.partitions import PartitionEnum, combine_partitions, fetch_partitions
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
 
@@ -60,7 +60,7 @@ class LogReader:
         wgs84_pose_fname: str = "wgs84.npz.lz4",
         map: Map = None,
         index_version: int = 0,
-        partitions: Optional[Dict[Enum, Any]] = None,
+        partitions: Set[PartitionEnum] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -85,7 +85,7 @@ class LogReader:
         self._map = Map() if map is None else map
         # TODO(julieta) Semantic version this
         self._index_version = index_version
-        self.partitions = partitions
+        self.partitions = set() if partitions is None else partitions
 
     def __repr__(self) -> str:
         return f"Pit30M Log Reader: {self._log_root_uri}"
@@ -93,12 +93,12 @@ class LogReader:
     @cached_property
     def partitions_index(self) -> np.ndarray:
         """A boolean np array that accounts for the requested partitions. Currently defaults to Front Camera"""
-        if self.partitions is None:
-            n_sensor_measurements = len(self.get_cam_geo_index(CamName.MIDDLE_FRONT_WIDE.name))
+        if not self.partitions:
+            n_sensor_measurements = len(self.get_cam_geo_index(CamName.MIDDLE_FRONT_WIDE))
             return np.full(n_sensor_measurements, True)
 
         # Fetch the indices from s3
-        partition_indices = fetch_partitions(self.log_id, self.partitions.keys())
+        partition_indices = fetch_partitions(self.log_id, self.partitions)
 
         # Combine the fetched indices with the values that the user requested
         partition_indices_and_values = {}
