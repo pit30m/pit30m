@@ -99,12 +99,8 @@ class LogReader:
 
         # Fetch the indices from s3
         partition_indices = fetch_partitions(self.log_id, self.partitions)
-
-        # Combine the fetched indices with the values that the user requested
-        partition_indices_and_values = {}
-        for partition, partition_index in partition_indices.items():
-            partition_indices_and_values[partition] = (partition_index, self.partitions[partition])
-        return combine_partitions(partition_indices_and_values)
+        combined_indices = np.logical_and.reduce(partition_indices)
+        return combined_indices
 
     @property
     def log_id(self) -> UUID:

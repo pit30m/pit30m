@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import enum
 import os
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 from enum import Enum
-from typing import Dict, Iterable, Tuple, Union
+from typing import Dict, Iterable, Set, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -18,6 +17,10 @@ class PartitionEnum(Enum):
     def value_to_index(val: PartitionEnum, index: np.ndarray) -> int:
         ...
 
+    @abstractproperty
+    def path_name(self) -> str:
+        ...
+
 
 # Preprocessing filters invalid poses and limits the number of poses per squared metre
 class PreProcessPartition(PartitionEnum):
@@ -28,6 +31,10 @@ class PreProcessPartition(PartitionEnum):
     def value_to_index(val: PreProcessPartition, index: np.ndarray) -> int:
         assert isinstance(val, PreProcessPartition), f"val must be a PreProcessPartition, not {type(val)=}"
         return index == val.value
+
+    @property
+    def path_name(self) -> str:
+        return "preprocessed"
 
 
 # Geographic partition into train/val/test
@@ -42,6 +49,10 @@ class GeoPartition(PartitionEnum):
         assert isinstance(val, GeoPartition), f"val must be a GeoPartition, not {type(val)=}"
         return index == val.value
 
+    @property
+    def path_name(self) -> str:
+        return "train_val_test"
+
 
 # Query/base partitioning for retrieval/based localization
 class QueryBasePartition(PartitionEnum):
@@ -52,6 +63,10 @@ class QueryBasePartition(PartitionEnum):
     def value_to_index(val: QueryBasePartition, index: np.ndarray) -> int:
         assert isinstance(val, QueryBasePartition), f"val must be a QueryBasePartition, not {type(val)=}"
         return index == val.value
+
+    @property
+    def path_name(self) -> str:
+        return "query_base"
 
 
 # Size partitioning for mid/tiny/full
@@ -70,44 +85,42 @@ class SizePartition(PartitionEnum):
         elif val == SizePartition.TINY:
             return index == val.value
 
+    @property
+    def path_name(self) -> str:
+        return "size"
+
 
 # path names on s3
-PARTITION_TO_PATH_NAME = {
-    PreProcessPartition: "preprocessed",
-    GeoPartition: "train_val_test",
-    QueryBasePartition: "query_base",
-    SizePartition: "size",
-}
+def partition_to_path_name(partition: PartitionEnum) -> str:
+    if isinstance(partition, PreProcessPartition):
+        return "preprocessed"
+    elif isinstance(partition, GeoPartition):
+        return "train_val_test"
+    elif isinstance(partition, QueryBasePartition):
+        return "query_base"
+    elif isinstance(partition, SizePartition):
+        return "size"
+    else:
+        raise ValueError(f"Unknown partition: {partition}")
 
 
 def fetch_partitions(
     log_id: UUID,
     partitions_to_fetch: Iterable[PartitionEnum],
-) -> Dict[PartitionEnum, np.ndarray]:
+) -> Tuple[np.ndarray]:
     """Fetch partitions from s3 for a given log"""
 
     dir = "s3://pit30m/partitions/"
     fs = fsspec.filesystem(urlparse(dir).scheme, anon=True)
 
-    partitions = {}
+    partitions = tuple()
     for partition in partitions_to_fetch:
-        partition_fpath = os.path.join(dir, PARTITION_TO_PATH_NAME[partition], f"{log_id}.npz")
+        partition_fpath = os.path.join(dir, partition.path_name, f"{log_id}.npz")
         if not fs.exists(partition_fpath):
             raise ValueError(f"Partition file not found: {partition_fpath}")
 
         with fs.open(partition_fpath, "rb") as f:
-            partitions[partition] = np.load(f)["partition"]
+            idx = np.load(f)["partition"]
+            partitions += (partition.value_to_index(partition, idx),)
 
     return partitions
-
-
-def combine_partitions(partititons_dict: Dict[PartitionEnum, Tuple[np.ndarray, PartitionEnum]]) -> np.ndarray:
-    """Converts a bunch of partitions to a single boolean index that can be used for filtering in the logreader"""
-
-    indices = []
-    for partition, (index, value) in partititons_dict.items():
-        processes_index = partition.value_to_index(value, index)
-        indices.append(processes_index)
-
-    combined_indices = np.logical_and.reduce(indices)
-    return combined_indices

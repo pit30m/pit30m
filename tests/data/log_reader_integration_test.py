@@ -27,16 +27,16 @@ def _real_log_reader_with_partition() -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
     return LogReader(
         "s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/",
-        partitions={PreProcessPartition: PreProcessPartition.VALID},
+        partitions={PreProcessPartition.VALID},
     )
 
 
-@fixture(name="real_log_reader_with_partition")
+@fixture(name="real_log_reader_with_two_partitions")
 def _real_log_reader_with_two_partition() -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
     return LogReader(
         "s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/",
-        partitions={PreProcessPartition: PreProcessPartition.VALID, GeoPartition: GeoPartition.TEST},
+        partitions={PreProcessPartition.VALID, GeoPartition.TEST, QueryBasePartition.QUERY},
     )
 
 
@@ -49,11 +49,16 @@ def test_real_log_read_index(real_log_reader: LogReader):
 def test_real_log_can_fetch_partition_index(
     real_log_reader: LogReader,
     real_log_reader_with_partition: LogReader,
+    real_log_reader_with_two_partitions: LogReader,
 ):
     """A log without arguments should filter out nothing"""
     index = real_log_reader.partitions_index
     assert sum(index) == len(index)
 
-    # If loading a partition, some measurements should be filtered outs
+    # If loading a partition, some measurements should be filtered out
     index = real_log_reader_with_partition.partitions_index
     assert sum(index) < len(index)
+
+    # If loading more partitions, even fewer measurements should be available
+    smallest_index = real_log_reader_with_two_partitions.partitions_index
+    assert sum(smallest_index) < sum(index)
