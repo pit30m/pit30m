@@ -13,7 +13,7 @@ import utm
 from PIL import Image
 
 from pit30m.camera import CamName
-from pit30m.data.partitions import PartitionEnum
+from pit30m.data.partitions import Partition
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
 
@@ -61,7 +61,7 @@ class LogReader:
         wgs84_pose_fname: str = "wgs84.npz.lz4",
         map: Map = None,
         index_version: int = 0,
-        partitions: Optional[Set[PartitionEnum]] = None,
+        partitions: Optional[Set[Partition]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 

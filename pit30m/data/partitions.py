@@ -6,10 +6,10 @@ from enum import Enum
 import numpy as np
 
 
-class PartitionEnum(Enum):
+class Partition(Enum):
     @staticmethod
     @abstractmethod
-    def value_to_index(val: PartitionEnum, index: np.ndarray) -> int:
+    def value_to_index(val: Partition, index: np.ndarray) -> int:
         ...
 
     @property
@@ -19,7 +19,7 @@ class PartitionEnum(Enum):
 
 
 # Preprocessing filters invalid poses and limits the number of poses per squared metre
-class PreProcessPartition(PartitionEnum):
+class PreProcessPartition(Partition):
     VALID = True
     INVALID = False
 
@@ -34,7 +34,7 @@ class PreProcessPartition(PartitionEnum):
 
 
 # Geographic partition into train/val/test
-class GeoPartition(PartitionEnum):
+class GeoPartition(Partition):
     TRAIN = 0
     VAL = 1
     TEST = 2
@@ -51,7 +51,7 @@ class GeoPartition(PartitionEnum):
 
 
 # Query/base partitioning for retrieval/based localization
-class QueryBasePartition(PartitionEnum):
+class QueryBasePartition(Partition):
     QUERY = 0
     BASE = 1
 
@@ -66,7 +66,7 @@ class QueryBasePartition(PartitionEnum):
 
 
 # Size partitioning for mid/tiny/full
-class SizePartition(PartitionEnum):
+class SizePartition(Partition):
     TINY = 0
     MID = 1
     FULL = 2
