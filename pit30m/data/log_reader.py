@@ -91,12 +91,21 @@ class LogReader:
 
     @cached_property
     def partitions_index(self) -> np.ndarray:
-        """A boolean np array that accounts for the requested partitions. Currently defaults to Front Camera"""
+        """
+        Returns a boolean np array that accounts for the requested partitions, by setting sensor readings that should
+        be skipped to False. Currently computed from the Front Camera.
+        """
         if not self.partitions:
             n_sensor_measurements = len(self.get_cam_geo_index(CamName.MIDDLE_FRONT_WIDE))
             return np.full(n_sensor_measurements, True)
 
-        # Fetch the indices from s3
+        partition_indices = self.partition_assigments
+        combined_indices = np.logical_and.reduce(partition_indices)
+        return combined_indices
+
+    @property
+    def partition_assigments(self):
+        """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
         partitions_basepath = "s3://pit30m/partitions/"
         fs = fsspec.filesystem(urlparse(partitions_basepath).scheme, anon=True)
 
@@ -111,8 +120,7 @@ class LogReader:
                 # Convert the fetched partition index into boolean array that matches the requested value
                 partition_indices += (partition.value_to_index(partition, idx),)
 
-        combined_indices = np.logical_and.reduce(partition_indices)
-        return combined_indices
+        return partition_indices
 
     @property
     def log_id(self) -> UUID:
@@ -137,16 +145,6 @@ class LogReader:
     def fs(self):
         """Filesystem object used to read log data."""
         return fsspec.filesystem(urlparse(self._log_root_uri).scheme, anon=True)
-
-    @lru_cache(maxsize=4)
-    def get_partition_assigments(self, partition="size"):
-        """Returns a list of partition names for this log."""
-        index_fpath = os.path.join(f"s3://pit30m/partitions/{partition}/{self.log_id}.npz")
-        if not self.fs.exists(index_fpath):
-            raise ValueError(f"Partition file not found: {index_fpath}!")
-
-        with self.fs.open(index_fpath, "rb") as f:
-            return np.load(f)["partition"]
 
     @lru_cache(maxsize=16)
     def get_lidar_geo_index(self):
