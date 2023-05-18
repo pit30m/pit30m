@@ -46,6 +46,8 @@ VELODYNE_NAME = "hdl64e_12_middle_front_roof"
 UTM_ZONE_NUMBER = 17
 UTM_ZONE_LETTER = "N"
 
+PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
+
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
     return gps_seconds_to_utc(gps_seconds).timestamp()
@@ -106,12 +108,12 @@ class LogReader:
     @property
     def partition_assigments(self):
         """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
-        partitions_basepath = "s3://pit30m/partitions/"
-        fs = fsspec.filesystem(urlparse(partitions_basepath).scheme, anon=True)
+
+        fs = fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
 
         partition_indices = tuple()
         for partition in self.partitions:
-            partition_fpath = os.path.join(partitions_basepath, partition.path_name, f"{self.log_id}.npz")
+            partition_fpath = os.path.join(PARTITIONS_BASEPATH, partition.path_name, f"{self.log_id}.npz")
             if not fs.exists(partition_fpath):
                 raise ValueError(f"Partition file not found: {partition_fpath}")
 
