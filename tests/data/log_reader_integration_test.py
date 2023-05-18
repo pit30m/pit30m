@@ -47,13 +47,13 @@ def test_real_log_can_fetch_partition_index(
     real_log_reader_with_two_partitions: LogReader,
 ):
     """A log without arguments should filter out nothing"""
-    index = real_log_reader.partitions_index
+    index = real_log_reader.partitions_mask
     assert sum(index) == len(index)
 
     # If loading a partition, some measurements should be filtered out
-    index = real_log_reader_with_partition.partitions_index
+    index = real_log_reader_with_partition.partitions_mask
     assert sum(index) < len(index)
 
     # If loading more partitions, even fewer measurements should be available
-    smallest_index = real_log_reader_with_two_partitions.partitions_index
+    smallest_index = real_log_reader_with_two_partitions.partitions_mask
     assert sum(smallest_index) < sum(index)

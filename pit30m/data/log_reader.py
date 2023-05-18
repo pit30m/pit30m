@@ -90,7 +90,7 @@ class LogReader:
         return f"Pit30M Log Reader: {self._log_root_uri}"
 
     @cached_property
-    def partitions_index(self) -> np.ndarray:
+    def partitions_mask(self) -> np.ndarray:
         """
         Returns a boolean np array that accounts for the requested partitions, by setting sensor readings that should
         be skipped to False. Currently computed from the Front Camera.
