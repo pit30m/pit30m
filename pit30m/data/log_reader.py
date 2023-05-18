@@ -14,7 +14,7 @@ import utm
 from PIL import Image
 
 from pit30m.camera import CamName
-from pit30m.data.partitions import PartitionEnum, combine_partitions, fetch_partitions
+from pit30m.data.partitions import PartitionEnum
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
 
@@ -98,7 +98,20 @@ class LogReader:
             return np.full(n_sensor_measurements, True)
 
         # Fetch the indices from s3
-        partition_indices = fetch_partitions(self.log_id, self.partitions)
+        dir = "s3://pit30m/partitions/"
+        fs = fsspec.filesystem(urlparse(dir).scheme, anon=True)
+
+        partition_indices = tuple()
+        for partition in self.partitions:
+            partition_fpath = os.path.join(dir, partition.path_name, f"{self.log_id}.npz")
+            if not fs.exists(partition_fpath):
+                raise ValueError(f"Partition file not found: {partition_fpath}")
+
+            with fs.open(partition_fpath, "rb") as f:
+                idx = np.load(f)["partition"]
+                # Convert the fetched partition index into boolean array that matches the requested value
+                partition_indices += (partition.value_to_index(partition, idx),)
+
         combined_indices = np.logical_and.reduce(partition_indices)
         return combined_indices
 
