@@ -10,12 +10,15 @@ import fsspec
 import lz4
 import numpy as np
 import utm
+from joblib import Memory
 from PIL import Image
 
 from pit30m.camera import CamName
 from pit30m.data.partitions import Partition
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
+
+memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 
 @dataclass
@@ -106,6 +109,7 @@ class LogReader:
         return combined_indices
 
     @property
+    @memory.cache(verbose=0)
     def partition_assigments(self):
         """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
 
