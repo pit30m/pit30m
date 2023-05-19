@@ -1,22 +1,24 @@
 import io
 import os
 from dataclasses import dataclass
-from datetime import datetime
 from functools import cached_property, lru_cache
-from typing import Iterator
+from typing import Iterator, Optional, Set
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
 import lz4
 import numpy as np
-import pandas as pd
 import utm
+from joblib import Memory
 from PIL import Image
 
 from pit30m.camera import CamName
+from pit30m.data.partitions import Partition
 from pit30m.data.submap import Map
 from pit30m.time_utils import gps_seconds_to_utc
+
+memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 
 @dataclass
@@ -47,6 +49,8 @@ VELODYNE_NAME = "hdl64e_12_middle_front_roof"
 UTM_ZONE_NUMBER = 17
 UTM_ZONE_LETTER = "N"
 
+PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
+
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
     return gps_seconds_to_utc(gps_seconds).timestamp()
@@ -60,6 +64,7 @@ class LogReader:
         wgs84_pose_fname: str = "wgs84.npz.lz4",
         map: Map = None,
         index_version: int = 0,
+        partitions: Optional[Set[Partition]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -75,6 +80,8 @@ class LogReader:
             wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz.lz4"
             map: Map object. If not provided, will try to load it from the log root
             index_version: Version of the index to use. Currently only 0 is supported.
+            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
+                defaults to None, which means that no sensor measurements are filtered.
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
@@ -82,9 +89,44 @@ class LogReader:
         self._map = Map() if map is None else map
         # TODO(julieta) Semantic version this
         self._index_version = index_version
+        self.partitions = set() if partitions is None else partitions
 
     def __repr__(self) -> str:
         return f"Pit30M Log Reader: {self._log_root_uri}"
+
+    @cached_property
+    def partitions_mask(self) -> np.ndarray:
+        """
+        Returns a boolean np array that accounts for the requested partitions, by setting sensor readings that should
+        be skipped to False. Currently computed from the Front Camera.
+        """
+        if not self.partitions:
+            n_sensor_measurements = len(self.get_cam_geo_index(CamName.MIDDLE_FRONT_WIDE))
+            return np.full(n_sensor_measurements, True)
+
+        partition_indices = self.partition_assigments
+        combined_indices = np.logical_and.reduce(partition_indices)
+        return combined_indices
+
+    @property
+    @memory.cache(verbose=0)
+    def partition_assigments(self):
+        """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
+
+        fs = fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
+
+        partition_indices = tuple()
+        for partition in self.partitions:
+            partition_fpath = os.path.join(PARTITIONS_BASEPATH, partition.path_name, f"{self.log_id}.npz")
+            if not fs.exists(partition_fpath):
+                raise ValueError(f"Partition file not found: {partition_fpath}")
+
+            with fs.open(partition_fpath, "rb") as f:
+                idx = np.load(f)["partition"]
+                # Convert the fetched partition index into boolean array that matches the requested value
+                partition_indices += (partition.value_to_index(partition, idx),)
+
+        return partition_indices
 
     @property
     def log_id(self) -> UUID:
@@ -281,7 +323,10 @@ class LogReader:
         """
         wgs84 = self.raw_wgs84_poses
         easting, northing, zn, zl = utm.from_latlon(
-            wgs84["latitude"], wgs84["longitude"], force_zone_letter=UTM_ZONE_LETTER, force_zone_number=UTM_ZONE_NUMBER
+            wgs84["latitude"],
+            wgs84["longitude"],
+            force_zone_letter=UTM_ZONE_LETTER,
+            force_zone_number=UTM_ZONE_NUMBER,
         )
         assert zn == UTM_ZONE_NUMBER, f"utm zone number is not {UTM_ZONE_NUMBER}"
         assert zl == UTM_ZONE_LETTER, f"utm zone letter is not {UTM_ZONE_LETTER}"
