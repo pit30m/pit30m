@@ -153,28 +153,45 @@ class LogReader:
         return fsspec.filesystem(urlparse(self._log_root_uri).scheme, anon=True)
 
     @lru_cache(maxsize=16)
-    def get_lidar_geo_index(self):
+    def get_lidar_geo_index(self, sort_by: str = "lidar_time") -> np.ndarray:
         """Returns a lidar index of dtype LIDAR_INDEX_V0_0_DTYPE.
 
         WARNING: 'rel_path' entries in indexes may be padded with spaces on the right since they are fixed-width
         strings. If you need to use them directly, make sure you use `.strip()` to remove the spaces.
+
+        Args:
+            sort_by: name of the field that we want to sort by. Defaults to `lidar_time`
+        Returns:
+            A structured numpy array with the lidar observations and their metadata.
         """
         index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version}.npz")
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
-            return np.load(f)["index"]
+            index = np.load(f)["index"]
+
+        index = index[np.argsort(index[sort_by])]
+        return index
 
     @lru_cache(maxsize=16)
-    def get_cam_geo_index(self, cam_name: CamName) -> np.ndarray:
-        """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE."""
+    def get_cam_geo_index(self, cam_name: CamName, sort_by: str = "img_time") -> np.ndarray:
+        """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE.
+        Args:
+            cam_name: name of the camera index to load
+            sort_by: name of the field that we want to sort by. Defaults to `img_time`
+        Returns:
+            A structured numpy array with the camera observations and their metadata.
+        """
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
-            return np.load(f)["index"]
+            index = np.load(f)["index"]
+
+        index = index[np.argsort(index[sort_by])]
+        return index
 
     def calib(self):
         calib_fpath = os.path.join(self._log_root_uri, "mono_camera_calibration.npy")
