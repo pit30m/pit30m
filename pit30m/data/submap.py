@@ -1,6 +1,6 @@
 import os
 import pickle as pkl
-from typing import Mapping, Optional, Tuple
+from typing import Iterable
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -11,6 +11,13 @@ from pyproj import CRS, Transformer
 UTM_ZONE_IN_PITTSBURGH_CODE = 32617
 WGS84_CODE = 4326
 DEFAULT_SUBMAP_INFO_PREFIX = "submap_utm.pkl"
+
+
+class SubmapPoseNotFoundException(Exception):
+    """Exception raised when we do not have the pose of a requested submap."""
+
+    def __init__(self, submap_id):
+        super().__init__(f"Pose not found for submap {submap_id}")
 
 
 class Singleton(type):
@@ -63,20 +70,25 @@ class Map(metaclass=Singleton):
         crs_wgs84 = CRS.from_epsg(WGS84_CODE)
         self._pit30m_utm_to_wgs84 = Transformer.from_crs(crs_utm, crs_wgs84)
 
-    def to_utm(self, map_poses_xyz, submap_ids):
-        """Returns corresponding UTM coordinates for the given pose + submap ID combinations.
-
+    def to_utm(self, map_poses_xyz: np.ndarray, submap_ids: Iterable[UUID]) -> np.ndarray:
+        """Returns corresponding UTM coordinates for the given pose + submap ID combinations. Assumes all poses are
+        within the same UTM zone, which holds for all of Pit30M.
         TODO(andrei): We probably want altitude as well.
 
-        Assumes all poses are within the same UTM zone, which holds for all of Pit30M.
+        Args:
+            map_poses_xyz: n-by-3 array of map-relative poses (x, y, z).
+            submap_ids:   n-element array or list with each pose's submap ID.
+        Returns:
+            An n-by-2 array of MRP poses transformed to UTM coordinates (x, y).
         """
         assert len(map_poses_xyz) == len(submap_ids)
-        # print(map_poses_xyz.shape)
-        # print(map_poses_xyz.dtype)
 
         off_utm = []
         for map_uuid in submap_ids:
-            off_utm.append(self._submap_to_utm[map_uuid])
+            try:
+                off_utm.append(self._submap_to_utm[map_uuid])
+            except KeyError as e:
+                raise SubmapPoseNotFoundException(map_uuid) from KeyError
 
         off_utm = np.array(off_utm)
         return map_poses_xyz[:, :2] + off_utm
