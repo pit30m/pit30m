@@ -2,7 +2,7 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Iterator, Optional, Set
+from typing import Iterator, Optional, Set, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -11,11 +11,12 @@ import lz4
 import numpy as np
 import utm
 from joblib import Memory
+from numpy.lib import recfunctions as rfn
 from PIL import Image
 
 from pit30m.camera import CamName
 from pit30m.data.partitions import Partition
-from pit30m.data.submap import Map
+from pit30m.data.submap import Map, SubmapPoseNotFoundException
 from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
@@ -315,16 +316,27 @@ class LogReader:
         return pose_index
 
     @cached_property
-    def utm_poses_dense(self) -> np.ndarray:
+    def utm_poses_dense(self) -> Tuple[np.ndarray, np.ndarray]:
         """UTM poses for the log, ordered by time.
 
         TODO(andrei): Update to provide altitude.
+
+        Returns:
+            A tuple with two elements:
+              - An n-long boolean array indicating whether the poses are valid
+              - An n-by-2 array with the UTM xy coordinates of the poses
         """
         mrp = self.map_relative_poses_dense
-        xyzs = np.stack((mrp["x"], mrp["y"], mrp["z"]), axis=1)
+        xyzs = rfn.structured_to_unstructured(mrp[["x", "y", "z"]])
         # Handle submap IDs which were truncated upon encoded due to ending with a zero.
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
-        return self._map.to_utm(xyzs, submaps)
+
+        try:
+            xys = self._map.to_utm(xyzs, submaps)
+        except SubmapPoseNotFoundException as e:
+            raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
+
+        return mrp["valid"], xys
 
     @cached_property
     def raw_wgs84_poses(self) -> np.ndarray:
