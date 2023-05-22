@@ -1,3 +1,4 @@
+import numpy as np
 from pytest import fixture
 
 from pit30m.camera import CamName
@@ -33,6 +34,18 @@ def _real_log_reader_with_two_partition() -> LogReader:
         "s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/",
         partitions={PreProcessPartition.VALID, GeoPartition.TEST, QueryBasePartition.QUERY},
     )
+
+
+def test_lidar_index_is_sorted(real_log_reader: LogReader):
+    index = real_log_reader.get_lidar_geo_index()
+    image_times = index["lidar_time"]
+    assert np.all(np.diff(image_times) >= 0)
+
+
+def test_camera_index_is_sorted(real_log_reader: LogReader):
+    index = real_log_reader.get_cam_geo_index(CamName.PORT_FRONT_WIDE)
+    image_times = index["img_time"]
+    assert np.all(np.diff(image_times) >= 0)
 
 
 def test_real_log_read_index(real_log_reader: LogReader):
