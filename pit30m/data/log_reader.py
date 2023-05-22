@@ -169,6 +169,7 @@ class LogReader:
             raise ValueError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
+            # TODO(andrei): Pre-sort the indexes at gen time.
             index = np.load(f)["index"]
 
         index = index[np.argsort(index[sort_by])]
