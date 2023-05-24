@@ -278,13 +278,8 @@ class LogReader:
 
         In practice, users should use the camera/LiDAR iterators instead.
         """
-        # XXX hack for development, do not land
-        # pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        root = self._log_root_uri.replace("s3://pit30m/", "/mnt/data/pit30m/pose-backup-2023-04-18/")
-        fs = fsspec.filesystem("file")
-        # fs = self.fs
-        pose_fpath = os.path.join(root, self._pose_fname)
-        with fs.open(pose_fpath, "rb") as in_compressed_f:
+        pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
+        with self.fs.open(pose_fpath, "rb") as in_compressed_f:
             with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
                 raw_poses = np.load(wgs84_f)["data"]
                 return raw_poses
