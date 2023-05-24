@@ -30,10 +30,11 @@ LOG_ID_TO_MISSING_SUBMAPS = {
     # Found on 2023-02-20 -- 1a8132d0-2634-4ad0-e433-ce5987ef0120 submap UUID was missing
     "c9e9e7a7-f1cb-4af8-c5c9-3a610cbcc20e": [
         UUID("1a8132d0-2634-4ad0-e433-ce5987ef0120"),
-    ]
+    ],
 }
 
 KNOWN_MISSING_SUBMAPS = [submap_id for submap_ids in LOG_ID_TO_MISSING_SUBMAPS.values() for submap_id in submap_ids]
+
 
 class Singleton(type):
     _instances = {}
@@ -103,8 +104,9 @@ class Map(metaclass=Singleton):
             northing, while the altitude is the original altitude in the map.
         """
         assert len(map_poses_xyz) == len(submap_ids)
-        assert map_poses_xyz.ndim == 2 and map_poses_xyz.shape[1] == 3, \
-            f"Must pass N x 3 map pose array, got: {map_poses_xyz.shape}"
+        assert (
+            map_poses_xyz.ndim == 2 and map_poses_xyz.shape[1] == 3
+        ), f"Must pass N x 3 map pose array, got: {map_poses_xyz.shape}"
 
         off_utm = []
         for map_uuid in submap_ids:

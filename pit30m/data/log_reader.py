@@ -371,12 +371,10 @@ class LogReader:
     def utm_poses_dense(self) -> Tuple[np.ndarray, np.ndarray]:
         """UTM poses for the log, ordered by time.
 
-        TODO(andrei): Update to provide altitude.
-
         Returns:
             A tuple with two elements:
-              - An n-long boolean array indicating whether the poses are valid
-              - An n-by-2 array with the UTM xy coordinates of the poses
+                - An n-long boolean array indicating whether the poses are valid
+                - An n-by-3 array with the UTM xy coordinates and altitudes of the poses
         """
         mrp = self.map_relative_poses_dense
         xyzs = rfn.structured_to_unstructured(mrp[["x", "y", "z"]])
@@ -385,11 +383,11 @@ class LogReader:
         submaps = [UUID(bytes=submap_uuid_bytes).ljust(16, b"\x00") for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
-            xys = self._map.to_utm(xyzs, submaps)
+            xyzs = self._map.to_utm(xyzs, submaps)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
 
-        return mrp["valid"], xys
+        return mrp["valid"], xyzs
 
     @cached_property
     def raw_wgs84_poses(self) -> np.ndarray:

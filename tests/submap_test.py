@@ -43,9 +43,9 @@ def test_utm():
         utm_coords,
         np.array(
             [
-                [7, 7,0],
-                [11, 11,0],
-                [18, 20.3,16],
+                [7, 7, 0],
+                [11, 11, 0],
+                [18, 20.3, 16],
             ]
         ),
     )
@@ -75,17 +75,18 @@ def test_missing_submap_utm():
 
     for log_id in LOG_ID_TO_MISSING_SUBMAPS.keys():
         lr = LogReader(log_root_uri=f"s3://pit30m/{log_id}/")
-        sids = []
-        sids = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00"))
-                for submap_uuid_bytes in lr.map_relative_poses_dense["submap_id"]]
-        # for submap_uuid_bytes in lr.map_relative_poses_dense["submap_id"]:
-        #     submap_uuid_bytes = submap_uuid_bytes.ljust(16, b"\x00")
-        #     sids.append(UUID(bytes=submap_uuid_bytes))
-
-        mrp_xyz = np.stack((lr.map_relative_poses_dense["x"],
-                         lr.map_relative_poses_dense["y"],
-                         lr.map_relative_poses_dense["z"],
-                         ), axis=1)
+        sids = [
+            UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00"))
+            for submap_uuid_bytes in lr.map_relative_poses_dense["submap_id"]
+        ]
+        mrp_xyz = np.stack(
+            (
+                lr.map_relative_poses_dense["x"],
+                lr.map_relative_poses_dense["y"],
+                lr.map_relative_poses_dense["z"],
+            ),
+            axis=1,
+        )
         with pytest.raises(SubmapPoseNotFoundException):
             utm_poses = map_.to_utm(mrp_xyz, sids)
         with pytest.raises(SubmapPoseNotFoundException):
@@ -93,7 +94,6 @@ def test_missing_submap_utm():
 
         # Completely unexpected submap IDs should always raise
         mutated_sids = list(sids)
-        print(len(sids), len(mutated_sids))
         mutated_sids[0] = completely_unexpected_submap_uuid
         with pytest.raises(SubmapPoseNotFoundException):
             utm_poses = map_.to_utm(mrp_xyz, mutated_sids, strict=True)
@@ -103,6 +103,4 @@ def test_missing_submap_utm():
         # Finally, make sure we get sensible NaN rows in the non-strict case
         utm_poses = map_.to_utm(mrp_xyz, sids, strict=False)
         assert np.isnan(utm_poses.ravel()).sum() > 0
-        assert np.isnan(utm_poses.ravel()).sum() % 3 == 0   # A row is either all NaN or all non-NaN
-
-
+        assert np.isnan(utm_poses.ravel()).sum() % 3 == 0  # A row is either all NaN or all non-NaN
