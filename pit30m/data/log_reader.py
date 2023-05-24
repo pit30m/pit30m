@@ -336,19 +336,11 @@ class LogReader:
         # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
             # TODO(andrei): Custom, interpretable dtype!
-            # Handle submap IDs which were truncated upon encoded due to ending with a zero.
-            sid = pose["map_relative"]["submap"]
-            # actual_pad = len(sid) < 16
-            # if actual_pad:
-            #     print(len(sid))
-            padded_submap_id = sid.ljust(16, b"\x00")
-            # if actual_pad:
-            #     print(len(padded_submap_id))
             pose_data.append(
                 (
                     pose["capture_time"],
                     pose["poses_and_differentials_valid"],
-                    padded_submap_id,
+                    pose["map_relative"]["submap"],
                     pose["map_relative"]["x"],
                     pose["map_relative"]["y"],
                     pose["map_relative"]["z"],
@@ -388,7 +380,9 @@ class LogReader:
         """
         mrp = self.map_relative_poses_dense
         xyzs = rfn.structured_to_unstructured(mrp[["x", "y", "z"]])
-        submaps = [UUID(bytes=submap_uuid_bytes) for submap_uuid_bytes in mrp["submap_id"]]
+
+        # Handle submap IDs which were truncated upon encoded due to ending with a zero.
+        submaps = [UUID(bytes=submap_uuid_bytes).ljust(16, b"\x00") for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
             xys = self._map.to_utm(xyzs, submaps)
