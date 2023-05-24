@@ -237,13 +237,12 @@ class MonkeyWrench:
                                 check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
                                 check its shape too, etc.
         """
-        # XXX(andrei): This function is deprecated.
         self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         res = self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        # XXX(andrei): Turn the misc diagnosis into a mini report too.
-        if len(res) > 0:
-            print("WARNING: misc non-sensor data had errors. See above for more information.")
+        # # TODO(andrei): Turn the misc diagnosis into a mini report too.
+        # if len(res) > 0:
+        #     print("WARNING: misc non-sensor data had errors. See above for more information.")
 
         print("Log indexing complete.")
 
@@ -257,10 +256,6 @@ class MonkeyWrench:
 
     def get_cam_dir(self, log_root: str, cam_name: str) -> str:
         return os.path.join(log_root, "cameras", cam_name.lstrip("/"))
-
-    # def next_to_validate(self, max: int = 10):
-    #     """Next logs to validate."""
-    #     pass
 
     def stat(self, max: int = 100, quiet: bool = False):
         all_logs = self.all_logs[:max]
@@ -1126,7 +1121,7 @@ class MonkeyWrench:
         else:
             errors.append(("vehicle_state", "missing"))
 
-        # XXX(andrei): Write this as a report entry! Discriminate between WARNING and ERROR. The difference is about
+        # TODO(andrei): Write this as a report entry! Discriminate between WARNING and ERROR. The difference is about
         # which files are missing. E.g., tl states missing is a warning, but core metadata, poses, or calibration
         # missing is an error.
         if check and len(errors) > 0:
