@@ -71,3 +71,14 @@ def test_real_log_without_partitions(real_log_reader: LogReader):
     # A log with no partitions should return a mask of all True
     partitions_mask = real_log_reader._partitions_mask
     assert sum(partitions_mask["mask"]) == len(partitions_mask)
+
+
+def test_index_gets_filtered(
+    real_log_reader: LogReader,
+    real_log_reader_with_partition: LogReader,
+):
+    # A log with no partitions should return a mask of all True
+    index_full = real_log_reader.get_cam_geo_index(CamName.PORT_REAR_WIDE)
+    index_short = real_log_reader_with_partition.get_cam_geo_index(CamName.PORT_REAR_WIDE)
+
+    assert len(index_full) > len(index_short)
