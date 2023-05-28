@@ -54,19 +54,20 @@ def test_real_log_read_index(real_log_reader: LogReader):
     assert "webp" in index["rel_path"][42]
 
 
-def test_real_log_can_fetch_partition_index(
-    real_log_reader: LogReader,
+def test_real_log_with_partitions(
     real_log_reader_with_partition: LogReader,
     real_log_reader_with_two_partitions: LogReader,
 ):
-    """A log without arguments should filter out nothing"""
-    index = real_log_reader.partitions_mask
-    assert sum(index) == len(index)
+    # A log with some partitions should return a mask with some False entries
+    partitions_mask = real_log_reader_with_partition._partitions_mask
+    assert sum(partitions_mask["mask"]) < len(partitions_mask)
 
-    # If loading a partition, some measurements should be filtered out
-    index = real_log_reader_with_partition.partitions_mask
-    assert sum(index) < len(index)
+    # A log with more partitions should return a mask with even more False entries
+    partitions_mask_2 = real_log_reader_with_two_partitions._partitions_mask
+    assert sum(partitions_mask_2["mask"]) < sum(partitions_mask["mask"])
 
-    # If loading more partitions, even fewer measurements should be available
-    smallest_index = real_log_reader_with_two_partitions.partitions_mask
-    assert sum(smallest_index) < sum(index)
+
+def test_real_log_without_partitions(real_log_reader: LogReader):
+    # A log with no partitions should return a mask of all True
+    partitions_mask = real_log_reader._partitions_mask
+    assert sum(partitions_mask["mask"]) == len(partitions_mask)

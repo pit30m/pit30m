@@ -2,7 +2,7 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Iterator, Optional, Set, Tuple
+from typing import Iterable, Iterator, Optional, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -61,11 +61,11 @@ class LogReader:
     def __init__(
         self,
         log_root_uri: str,
-        pose_fname: str = "all_poses.npz.lz4",
-        wgs84_pose_fname: str = "wgs84.npz.lz4",
+        pose_fname: str = "all_poses.npz",
+        wgs84_pose_fname: str = "wgs84.npz",
         map: Map = None,
         index_version: int = 0,
-        partitions: Optional[Set[Partition]] = None,
+        partitions: Optional[Iterable[Partition]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -77,8 +77,8 @@ class LogReader:
 
         Args:
             log_root_uri: URI to the root of the log. This should be a directory containing a "cameras", "lidars", and other dirs
-            pose_fname: Name of the pose file. This is usually "all_poses.npz.lz4"
-            wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz.lz4"
+            pose_fname: Name of the pose file. This is usually "all_poses.npz"
+            wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz"
             map: Map object. If not provided, will try to load it from the log root
             index_version: Version of the index to use. Currently only 0 is supported.
             partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
@@ -96,23 +96,42 @@ class LogReader:
         return f"Pit30M Log Reader: {self._log_root_uri}"
 
     @cached_property
-    def partitions_mask(self) -> np.ndarray:
+    def _partitions_mask(self) -> np.ndarray:
         """
         Returns a boolean np array that accounts for the requested partitions, by setting sensor readings that should
-        be skipped to False. Currently computed from the Front Camera.
-        """
-        if not self.partitions:
-            n_sensor_measurements = len(self.get_cam_geo_index(CamName.MIDDLE_FRONT_WIDE))
-            return np.full(n_sensor_measurements, True)
+        be skipped to False. Computed for the raw pose data @ 100 Hz.
 
-        partition_indices = self.partition_assigments
-        combined_indices = np.logical_and.reduce(partition_indices)
-        return combined_indices
+        Returns:
+            A structured array with two fields:
+            1. "capture_time": float 64 series of pose GPS timestamps
+            2. "mask": boolean indicating whether each pose is included in the requested partitions
+        """
+        n_sensor_measurements = len(self.raw_pose_data)
+        partition_indices = self._partition_assigments
+        partition_indices += (np.full(n_sensor_measurements, True),)
+
+        combined_indices_mask = np.logical_and.reduce(partition_indices)
+        timestamps = self.raw_pose_data["capture_time"]
+
+        combined_indices_mask = rfn.unstructured_to_structured(
+            combined_indices_mask[:, np.newaxis], dtype=[("mask", "?")]
+        )
+        timestamps = rfn.unstructured_to_structured(timestamps[:, np.newaxis], dtype=[("timestamp", "<f8")])
+
+        mask_with_timestamps = rfn.merge_arrays((timestamps, combined_indices_mask))
+        return mask_with_timestamps
 
     @property
     @memory.cache(verbose=0)
-    def partition_assigments(self):
-        """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
+    def _partition_assigments(self) -> Tuple[np.ndarray]:
+        """Fetches partition indices from S3 and converts them to boolean arrays according to the reader's partition
+        values. Note that these partitions are done wrt the raw pose data @ 100Hz, not the sensor data; therefore,
+        we must index sensor data into these partitions to find out which partitions they belong to.
+
+        Returns:
+            A tuple of boolean arrays. Each array has n_dense_poses entries, and each entry represents membership of the
+            pose to a requested partition.
+        """
 
         fs = fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
 
@@ -193,6 +212,15 @@ class LogReader:
             index = np.load(f)["index"]
 
         index = index[np.argsort(index[sort_by])]
+
+        # Return only the subset that matches the requested partition
+        partitions_mask = self._partitions_mask
+        matched_indices = np.searchsorted(partitions_mask["timestamp"], index["img_time"], side="right") - 1
+        matched_bool = partitions_mask["mask"][matched_indices]
+
+        # Filter with the obtained mask
+        index = index[matched_bool]
+
         return index
 
     def calib(self):
@@ -234,8 +262,7 @@ class LogReader:
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
         with self.fs.open(pose_fpath, "rb") as in_compressed_f:
-            with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
-                return np.load(wgs84_f)["data"]
+            return np.load(in_compressed_f)["data"]
 
     @cached_property
     def continuous_pose_dense(self) -> np.ndarray:
@@ -343,8 +370,7 @@ class LogReader:
         """Raw WGS84 poses, not optimized offline. 10Hz."""
         wgs84_fpath = os.path.join(self._log_root_uri, self._wgs84_pose_fname)
         with self.fs.open(wgs84_fpath, "rb") as in_compressed_f:
-            with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
-                return np.load(wgs84_f)["data"]
+            return np.load(in_compressed_f)["data"]
 
     @cached_property
     def raw_wgs84_poses_as_utm(self) -> np.ndarray:
