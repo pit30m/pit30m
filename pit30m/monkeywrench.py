@@ -120,7 +120,7 @@ def query_log_status(root, log_id: str) -> LogStatus:
             return LogStatus.CRASHED_OR_IN_PROGRESS
 
 
-def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
+def stat_sensors_for_log(root: str, log_id: str, index_version: int = 1):
     log_id = log_id.strip().strip("/")
     fs = fsspec.filesystem(urlparse(root).scheme)
     log_root = os.path.join(root, log_id)
@@ -145,7 +145,7 @@ def stat_sensors_for_log(root: str, log_id: str, index_version: int = 0):
         #  - w/ npz:                2.8 min
         #  - w/ npz + 2x processes: 2.2 min (1Gbps net is saturated)
         #
-        index_fpath = os.path.join(cam_dir, "index", f"index_v{index_version}.npz")
+        index_fpath = os.path.join(cam_dir, "index", f"index_v{index_version:02d}.npz")
 
         if not fs.exists(index_fpath):
             # Camera not dumped
@@ -535,7 +535,7 @@ class MonkeyWrench:
     #         for cam in CamName:
     #             self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
 
-    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 0):
+    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 1):
         log_id = self.all_logs[idx]
         print("=" * 80)
         print(f"Indexing log {log_id} ({idx + 1} / {len(self.all_logs)})")
@@ -547,7 +547,7 @@ class MonkeyWrench:
         log_id: str,
         out_index_dir: Optional[str] = None,
         reindex: bool = False,
-        index_version: int = 0,
+        index_version: int = 1,
     ):
         """Create an index of the images in the given log.
 
@@ -567,11 +567,9 @@ class MonkeyWrench:
             self._logger.info(f"\n==========\n{cam_name.name}\n==========")
             self.index_camera_v2(
                 log_id=log_id,
-                # _root=_root,
-                out_index_dir=out_index_dir,
-                # submap_utm_fpath=submap_utm_fpath,
-                reindex=reindex,
                 cam_name=cam_name,
+                out_index_dir=out_index_dir,
+                reindex=reindex,
                 index_version=index_version,
             )
 
@@ -579,12 +577,12 @@ class MonkeyWrench:
         self,
         log_id: str,
         cam_name: Union[CamName, str],
-        out_index_dir: Optional[str] = None,
-        reindex: bool = False,
-        index_version: int = 0,
+        out_index_dir: Optional[str],
+        reindex: bool,
+        index_version: int,
     ):
         """v2 indexer - parallel reading and no image loading. Please see `index_all_cameras` for info."""
-        assert index_version == 0, "v0 is the only currently supported DTYPE"
+        assert index_version == 1, "v1 is the only currently supported DTYPE"
         map = self.map
 
         if isinstance(cam_name, str):
@@ -604,7 +602,7 @@ class MonkeyWrench:
         out_fs = fsspec.filesystem(out_scheme)
         #     _logger.info("out fs scheme: %s", out_scheme)
 
-        out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version}.npy")
+        out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version:02d}.npy")
         out_index_fpath_npz = out_index_fpath.replace(".npy", ".npz")
 
         self._logger.info("Checking if index %s is there... (incl npz version)", out_index_fpath)
@@ -621,7 +619,7 @@ class MonkeyWrench:
             str(exists_npy),
             str(exists_npz),
         )
-        index = build_camera_index(self._root, log_reader, cam_dir, self._logger)
+        index = build_camera_index(self._root, log_reader, cam_dir, self._logger, index_version=index_version)
 
         # For a rather hefty log (1h20) a v0 index would be ~17MiB uncompressed per camera.
         #
@@ -633,7 +631,7 @@ class MonkeyWrench:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote index(es) to: {out_index_fpath}")
 
-    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 0):
+    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 1):
         log_id = self.all_logs[log_index]
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
@@ -643,12 +641,12 @@ class MonkeyWrench:
     def index_lidar(
         self,
         log_id: str,
-        lidar_name: str = VELODYNE_NAME,
-        out_index_dir: Optional[str] = None,
-        reindex: bool = False,
-        index_version: int = 0,
+        lidar_name: str,
+        out_index_dir: Optional[str],
+        reindex: bool,
+        index_version: int,
     ):
-        assert index_version == 0, "v0 is the only currently supported DTYPE"
+        assert index_version == 1, "v1 is the only currently supported DTYPE"
         map = self.map
 
         self._logger.info("Setting up log reader to process LiDAR %s", lidar_name)
@@ -662,7 +660,7 @@ class MonkeyWrench:
         out_scheme = urlparse(out_index_dir).scheme
         out_fs = fsspec.filesystem(out_scheme)
 
-        out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version}.npy")
+        out_index_fpath = os.path.join(out_index_dir, f"index_v{index_version:02d}.npy")
         out_index_fpath_npz = out_index_fpath.replace(".npy", ".npz")
 
         self._logger.info("Checking if LiDAR index %s is there... (incl npz version)", out_index_fpath)
