@@ -63,6 +63,7 @@ Package development, testing, and releasing is performed with `poetry`. If you j
  4. Test with `poetry run pytest`
     - Advanced command: `poetry run pytest -ff --new-first --quiet --color=yes --maxfail=3 -n 4`
     - This command will run tests, then wait for new changes and test them automatically. Test execution will run in parallel thanks to the `-n 4` argument.
+    - The command lets you get feedback on whether your code change fixed or broke a particular test within seconds.
  5. Remember to run `poetry install` after pulling and/or updating dependencies.
 
 
