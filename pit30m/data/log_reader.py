@@ -21,6 +21,8 @@ from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
+from pit30m.indexing import associate_np
+
 
 @dataclass
 class CameraImage:
@@ -51,6 +53,9 @@ UTM_ZONE_NUMBER = 17
 UTM_ZONE_LETTER = "N"
 
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
+
+# Sensor must be at most this fart from the pose to be considered a match
+SENSOR_TO_POSE_MATCH_EPSILON_S = 0.5
 
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
@@ -196,7 +201,7 @@ class LogReader:
         return index
 
     @lru_cache(maxsize=16)
-    def get_cam_geo_index(self, cam_name: CamName, sort_by: str = "img_time") -> np.ndarray:
+    def get_cam_geo_index(self, cam_name: CamName = CamName.MIDDLE_FRONT_WIDE, sort_by: str = "img_time") -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE.
         Args:
             cam_name: name of the camera index to load
@@ -215,8 +220,13 @@ class LogReader:
 
         # Return only the subset that matches the requested partition
         partitions_mask = self._partitions_mask
-        matched_indices = np.searchsorted(partitions_mask["timestamp"], index["img_time"], side="right") - 1
+
+        # NOTE(julieta) this will return the nearest neighbour on the left, which might not be the nearest neighbour overall
+        # However, since dense poses come at 100Hz, this is probably fine
+        matched_indices, over = associate_np(index["img_time"], partitions_mask["timestamp"], max_delta_s=0.1)
+
         matched_bool = partitions_mask["mask"][matched_indices]
+        matched_bool[over] = False
 
         # Filter with the obtained mask
         index = index[matched_bool]

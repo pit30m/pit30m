@@ -1,6 +1,6 @@
 import numpy as np
 
-from pit30m.indexing import associate
+from pit30m.indexing import associate, associate_np
 
 
 def test_associate_1to1():
@@ -9,6 +9,10 @@ def test_associate_1to1():
     np.testing.assert_equal(
         np.array([0, 1, 2, 3]),
         associate(qq, tt),
+    )
+    np.testing.assert_equal(
+        np.array([0, 1, 2, 3]),
+        associate_np(qq, tt),
     )
 
 
@@ -19,6 +23,10 @@ def test_associate_1to2():
         np.array([0, 1, 2, 3]),
         associate(qq, tt),
     )
+    np.testing.assert_equal(
+        np.array([0, 1, 2, 3]),
+        associate_np(qq, tt),
+    )
 
 
 def test_associate_2to1():
@@ -28,6 +36,10 @@ def test_associate_2to1():
         np.array([0, 1, 2, 3, 3]),
         associate(qq, tt),
     )
+    np.testing.assert_equal(
+        np.array([0, 1, 2, 3, 3]),
+        associate_np(qq, tt),
+    )
 
 
 def test_associate_right_side():
@@ -36,4 +48,8 @@ def test_associate_right_side():
     np.testing.assert_equal(
         np.array([0, 1, 1, 1, 2, 2, 2, 2]),
         associate(qq, tt),
+    )
+    np.testing.assert_equal(
+        np.array([0, 1, 1, 1, 2, 2, 2, 2]),
+        associate_np(qq, tt),
     )
