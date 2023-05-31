@@ -32,7 +32,13 @@ LOG_ID_TO_MISSING_SUBMAPS = {
     ],
 }
 
-KNOWN_MISSING_SUBMAPS = [submap_id for submap_ids in LOG_ID_TO_MISSING_SUBMAPS.values() for submap_id in submap_ids]
+BLANK_UUID = UUID("00000000-0000-0000-0000-000000000000")
+
+# test-query poses have been sanitized from the dataset and are not available. The sanitization includes the submap ID,
+# which for these entries has been replaced wiht th a null UUID.
+KNOWN_MISSING_SUBMAPS = [submap_id for submap_ids in LOG_ID_TO_MISSING_SUBMAPS.values() for submap_id in submap_ids] + [
+    BLANK_UUID
+]
 
 
 class Singleton(type):
