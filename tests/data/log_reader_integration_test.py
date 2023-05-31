@@ -12,6 +12,12 @@ def _real_map() -> Map:
     return Map()
 
 
+@fixture(name="nuked_log_reader")
+def _nuked_log_reader(real_map: Map) -> LogReader:
+    """A log that had some of its poses nuked to hide ground truth."""
+    return LogReader("s3://pit30m/556af30b-cb04-4a08-ee47-4eb9e79da376")
+
+
 @fixture(name="real_log_reader")
 def _real_log_reader(real_map: Map) -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
@@ -34,6 +40,11 @@ def _real_log_reader_with_two_partition() -> LogReader:
         "s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/",
         partitions={PreProcessPartition.VALID, GeoPartition.TEST, QueryBasePartition.QUERY},
     )
+
+
+def test_real_log_can_fetch_dense_utm_poses(nuked_log_reader: LogReader):
+    poses = nuked_log_reader.utm_poses_dense
+    assert len(poses) > 0
 
 
 def test_real_log_can_fetch_raw_pose_data(real_log_reader: LogReader):

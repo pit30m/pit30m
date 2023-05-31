@@ -63,6 +63,10 @@ class Map(metaclass=Singleton):
             submap_utm = pkl.load(f)
 
         submap_to_utm = {UUID(submap_id): utm_coords for submap_id, utm_coords in submap_utm.items()}
+
+        # Add a dummy offset of zero for poses that have been removed to hide ground truth
+        submap_to_utm[UUID("00000000-0000-0000-0000-000000000000")] = np.zeros(2)
+
         self._submap_to_utm = submap_to_utm
 
         # Construct the projection object which takes UTM coordinates and converts them into WGS84 (lat, lon).
