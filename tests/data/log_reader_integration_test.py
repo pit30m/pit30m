@@ -36,6 +36,16 @@ def _real_log_reader_with_two_partition() -> LogReader:
     )
 
 
+def test_real_log_can_fetch_raw_pose_data(real_log_reader: LogReader):
+    poses = real_log_reader.raw_pose_data
+    assert len(poses) > 0
+
+
+def test_real_log_can_fetch_raw_wgs84_poses(real_log_reader: LogReader):
+    poses = real_log_reader.raw_wgs84_poses
+    assert len(poses) > 0
+
+
 def test_lidar_index_is_sorted(real_log_reader: LogReader):
     index = real_log_reader.get_lidar_geo_index()
     image_times = index["lidar_time"]

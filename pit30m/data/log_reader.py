@@ -109,8 +109,8 @@ class LogReader:
     def __init__(
         self,
         log_root_uri: str,
-        pose_fname: str = "all_poses.npz.lz4",
-        wgs84_pose_fname: str = "wgs84.npz.lz4",
+        pose_fname: str = "all_poses.npz",
+        wgs84_pose_fname: str = "wgs84.npz",
         map: Map = None,
         index_version: int = 0,
         partitions: Optional[Set[Partition]] = None,
@@ -125,8 +125,8 @@ class LogReader:
 
         Args:
             log_root_uri: URI to the root of the log. This should be a directory containing a "cameras", "lidars", and other dirs
-            pose_fname: Name of the pose file. This is usually "all_poses.npz.lz4"
-            wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz.lz4"
+            pose_fname: Name of the pose file. This is usually "all_poses.npz"
+            wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz"
             map: Map object. If not provided, will try to load it from the log root
             index_version: Version of the index to use. Currently only 0 is supported.
             partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
@@ -279,10 +279,8 @@ class LogReader:
         In practice, users should use the camera/LiDAR iterators instead.
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        with self.fs.open(pose_fpath, "rb") as in_compressed_f:
-            with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
-                raw_poses = np.load(wgs84_f)["data"]
-                return raw_poses
+        with self.fs.open(pose_fpath, "rb") as wgs84_f:
+            return np.load(wgs84_f)["data"]
 
     @cached_property
     def continuous_pose_dense(self) -> np.ndarray:
@@ -389,8 +387,7 @@ class LogReader:
         """Raw WGS84 poses, not optimized offline. 10Hz."""
         wgs84_fpath = os.path.join(self._log_root_uri, self._wgs84_pose_fname)
         with self.fs.open(wgs84_fpath, "rb") as in_compressed_f:
-            with lz4.frame.open(in_compressed_f, "rb") as wgs84_f:
-                return np.load(wgs84_f)["data"]
+            return np.load(in_compressed_f)["data"]
 
     @cached_property
     def raw_wgs84_poses_as_utm(self) -> np.ndarray:
