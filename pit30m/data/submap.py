@@ -1,7 +1,6 @@
 import os
 import pickle as pkl
 from typing import Iterable
-from urllib.parse import urlparse
 from uuid import UUID
 
 import numpy as np
