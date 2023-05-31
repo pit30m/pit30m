@@ -6,7 +6,6 @@ import os
 from urllib.parse import urlparse
 
 import fsspec
-import ipdb
 import lz4
 import numpy as np
 from joblib import Memory, Parallel, delayed
@@ -16,17 +15,18 @@ from pit30m.util import print_list_with_limit
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
 MAX_IMG_RELPATH_LEN = 22  # = len("0090/000000.night.webp")
-MAX_LIDAR_RELPATH_LEN = 14  # = len("007959.npz.lz4")
+MAX_LIDAR_RELPATH_LEN = 15  # = len("0000/007959.npz")
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 # Please refer to the NumPy documentation for exact details on type dimensions.
 # https://numpy.org/doc/stable/reference/arrays.dtypes.html
+
+# Deprecated, please use V0.
 CAM_INDEX_V0_0_DTYPE = np.dtype(
     [
-        # TODO-LOW(andrei): Index a number and day/night to save space.
-        ("rel_path", str, MAX_IMG_RELPATH_LEN),
-        # TODO(andrei): This is currently a GPS timestamp. Need to update to UNIX when (re)building the index.
+        ("rel_path", str, MAX_LIDAR_RELPATH_LEN),
+        # NOTE(andrei): GPS timestamp in the pre-release index.
         ("img_time", np.double),
         ("shutter_s", np.double),
         ("seq_counter", np.int64),
@@ -60,8 +60,85 @@ CAM_INDEX_V0_0_DTYPE = np.dtype(
         ("utm_z", np.double),  # TODO(andrei): Make sure you populate UTM Z (altitude) eventually
     ]
 )
+CAM_INDEX_V1_0_DTYPE = np.dtype(
+    [
+        # TODO-LOW(andrei): Index a number and day/night to save space.
+        ("rel_path", str, MAX_IMG_RELPATH_LEN),
+        # Unix timestamp
+        ("img_time", np.double),
+        ("shutter_s", np.double),
+        ("seq_counter", np.int64),
+        ("gain_db", np.double),
+        ("cp_present", bool),
+        ("cp_valid", bool),
+        ("cp_time_s", np.double),
+        ("cp_x", np.double),
+        ("cp_y", np.double),
+        ("cp_z", np.double),
+        ("cp_roll", np.double),
+        ("cp_pitch", np.double),
+        ("cp_yaw", np.double),
+        ("mrp_present", bool),
+        ("mrp_valid", bool),
+        ("mrp_time", np.double),
+        ("mrp_submap_id", bytes, 16),
+        ("mrp_x", np.double),
+        ("mrp_y", np.double),
+        ("mrp_z", np.double),
+        ("mrp_roll", np.double),
+        ("mrp_pitch", np.double),
+        ("mrp_yaw", np.double),
+        # UTM coordinates are provided for CONVENIENCE, computed from MRP based on the v0 (unrefined)
+        # submap UTM coordinates. Ideally you'll eventually want to use the 'Map' class and compute your
+        # own UTMs once Andrei B. manages to release refined submap UTMs.
+        ("utm_present", bool),
+        ("utm_valid", bool),
+        ("utm_x", np.double),  # Easting
+        ("utm_y", np.double),  # Northing
+        ("utm_z", np.double),  # Altitude
+    ]
+)
+
 
 LIDAR_INDEX_V0_0_DTYPE = np.dtype(
+    [
+        ("rel_path", str, 14),
+        ("lidar_time", np.double),
+        ("lidar_min_time", np.double),
+        ("lidar_max_time", np.double),
+        ("lidar_mean_time", np.double),
+        ("lidar_median_time", np.double),
+        ("num_points", np.int64),
+        ("cp_present", bool),
+        ("cp_valid", bool),
+        ("cp_time_s", np.double),
+        ("cp_x", np.double),
+        ("cp_y", np.double),
+        ("cp_z", np.double),
+        ("cp_roll", np.double),
+        ("cp_pitch", np.double),
+        ("cp_yaw", np.double),
+        ("mrp_present", bool),
+        ("mrp_valid", bool),
+        ("mrp_time", np.double),
+        ("mrp_submap_id", bytes, 16),
+        ("mrp_x", np.double),
+        ("mrp_y", np.double),
+        ("mrp_z", np.double),
+        ("mrp_roll", np.double),
+        ("mrp_pitch", np.double),
+        ("mrp_yaw", np.double),
+        # UTM coordinates are provided for CONVENIENCE, computed from MRP based on the v0 (unrefined)
+        # submap UTM coordinates. Ideally you'll eventually want to use the 'Map' class and compute your
+        # own UTMs once Andrei B. manages to release refined submap UTMs.
+        ("utm_present", bool),
+        ("utm_valid", bool),
+        ("utm_x", np.double),  # Easting
+        ("utm_y", np.double),  # Northing
+        ("utm_z", np.double),  # Altitude
+    ]
+)
+LIDAR_INDEX_V1_0_DTYPE = np.dtype(
     [
         ("rel_path", str, MAX_LIDAR_RELPATH_LEN),
         ("lidar_time", np.double),
@@ -96,7 +173,7 @@ LIDAR_INDEX_V0_0_DTYPE = np.dtype(
         ("utm_valid", bool),
         ("utm_x", np.double),  # Easting
         ("utm_y", np.double),  # Northing
-        ("utm_z", np.double),  # TODO(andrei): Make sure you populate UTM Z (altitude) eventually
+        ("utm_z", np.double),  # Altitude
     ]
 )
 
