@@ -1,5 +1,6 @@
 """Utility functions for timing, data association, and indexing."""
 
+import logging
 import math
 import multiprocessing as mp
 import os
@@ -10,8 +11,9 @@ import lz4
 import numpy as np
 from joblib import Memory, Parallel, delayed
 
+from pit30m.data.log_reader import LogReader
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
-from pit30m.time_utils import gps2utc
+from pit30m.time_utils import gps_seconds_to_utc
 from pit30m.util import print_list_with_limit
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
@@ -200,7 +202,7 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
         assert timestamp_gps_s < START_OF_2011_UNIX
         # Not used
         # transmission_s = float(meta["transmission_seconds"])
-        timestamp_unix_s = gps2utc(timestamp_gps_s).timestamp()
+        timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
 
         entry = (timestamp_unix_s, float(meta["shutter_seconds"]), int(meta["sequence_counter"]), float(meta["gain_db"]))
         return img_uri, entry
@@ -259,7 +261,7 @@ def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
 
             # Assumption - no leap second during the sweep.
             first_point_gps = point_times_gps[0]
-            first_point_unix = gps2utc(first_point_gps).timestamp()
+            first_point_unix = gps_seconds_to_utc(first_point_gps).timestamp()
             assert first_point_unix > first_point_gps
             naive_delta = first_point_unix - point_times_gps[0]
             assert naive_delta > 0
@@ -328,7 +330,9 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
     return result
 
 
-def build_camera_index(in_root, log_reader, cam_dir, logger, index_version):
+def build_camera_index(
+        in_root: str, log_reader: LogReader, cam_dir: str, logger: logging.Logger, index_version: int
+    ) -> np.ndarray:
     """Internal function to build an index for a sensor in a log.
 
     Grabs all available images and tries to associate them with poses by timestamp, creating an index in numpy binary
@@ -353,9 +357,9 @@ def build_camera_index(in_root, log_reader, cam_dir, logger, index_version):
 
     logger.info("Reading UTM and MRP")
     # Note that UTM is inferred from MRP via (very much imperfect) submap UTMs
-    utm_poses = log_reader.utm_poses_dense
+    _, utm_poses = log_reader.utm_poses_dense
     mrp_poses = log_reader.map_relative_poses_dense
-    assert len(mrp_poses) == len(utm_poses)
+    assert len(mrp_poses) == len(utm_poses), f"{len(mrp_poses) = } != {len(utm_poses) = }"
     mrp_times = np.array(mrp_poses["time"])
 
     logger.info("Listing all images from %s", cam_dir)
