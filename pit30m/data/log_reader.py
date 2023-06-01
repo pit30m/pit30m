@@ -275,7 +275,8 @@ class LogReader:
     def raw_pose_data(self) -> npt.NDArray[RAW_POSE_DTYPE]:
         """Returns the internal raw pose array, which needs manual association with other data types. 100Hz.
 
-        In practice, users should use the camera/LiDAR iterators instead.
+        In practice, users should use the camera/LiDAR iterators instead. The raw arrays are full of possibly confusing
+        or unexpected aspects, e.g., GPS instead of UNIX time.
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
         with self.fs.open(pose_fpath, "rb") as raw_pose_f:
@@ -287,13 +288,14 @@ class LogReader:
 
         Not useful for global localization, since each log will have its own coordinate system, but useful for SLAM-like
         evaluation, since you will have a continuous pose trajectory.
+
+        Pose times are UNIX seconds.
         """
         pose_data = []
-        # TODO(andrei): Document the timestamps carefully.
         for pose in self.raw_pose_data:
             pose_data.append(
                 (
-                    pose["capture_time"],
+                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["continuous"]["x"],
                     pose["continuous"]["y"],
@@ -308,7 +310,7 @@ class LogReader:
 
     @cached_property
     def map_relative_poses_dense(self) -> np.ndarray:
-        """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap.
+        """T x 9 array with unix time, validity, submap ID, and the 6-DoF pose within that submap.
 
         WARNING:
             - As of 2023-02, the submaps are not 100% globally consistent. Topometric pose accuracy is cm-level, but
@@ -325,12 +327,11 @@ class LogReader:
         # The data also has pose and velocity covariance information, but I have never used directly so I don't know
         # if it's well-calibrated.
         pose_data = []
-        # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
             # TODO(andrei): Custom, interpretable dtype!
             pose_data.append(
                 (
-                    pose["capture_time"],
+                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["map_relative"]["submap"],
                     pose["map_relative"]["x"],

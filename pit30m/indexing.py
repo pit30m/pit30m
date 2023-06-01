@@ -204,7 +204,12 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
         # transmission_s = float(meta["transmission_seconds"])
         timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
 
-        entry = (timestamp_unix_s, float(meta["shutter_seconds"]), int(meta["sequence_counter"]), float(meta["gain_db"]))
+        entry = (
+            timestamp_unix_s,
+            float(meta["shutter_seconds"]),
+            int(meta["sequence_counter"]),
+            float(meta["gain_db"]),
+        )
         return img_uri, entry
 
 
@@ -331,8 +336,8 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
 
 
 def build_camera_index(
-        in_root: str, log_reader: LogReader, cam_dir: str, logger: logging.Logger, index_version: int
-    ) -> np.ndarray:
+    in_root: str, log_reader: LogReader, cam_dir: str, logger: logging.Logger, index_version: int
+) -> np.ndarray:
     """Internal function to build an index for a sensor in a log.
 
     Grabs all available images and tries to associate them with poses by timestamp, creating an index in numpy binary
@@ -505,7 +510,9 @@ def build_camera_index(
     return index
 
 
-def build_lidar_index(in_root, log_reader, lidar_dir, _logger, index_version: int):
+def build_lidar_index(
+        in_root: str, log_reader: LogReader, lidar_dir: str, _logger: logging.Logger, index_version: int
+    ) -> np.ndarray:
     """Internal function to build an index for a LiDAR in a log."""
     _logger.info("Reading continuous pose data")
     cp_dense = log_reader.continuous_pose_dense
@@ -522,9 +529,9 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger, index_version: in
 
     _logger.info("Reading UTM and MRP")
     # Note that UTM is inferred from MRP via (very much imperfect) submap UTMs
-    utm_poses = log_reader.utm_poses_dense
+    _, utm_poses = log_reader.utm_poses_dense
     mrp_poses = log_reader.map_relative_poses_dense
-    assert len(mrp_poses) == len(utm_poses)
+    assert len(mrp_poses) == len(utm_poses), f"{len(mrp_poses) = } != {len(utm_poses) = }"
     mrp_times = np.array(mrp_poses["time"])
 
     _logger.info("Listing all LiDAR sweeps from %s", lidar_dir)
@@ -554,7 +561,7 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger, index_version: in
             # This estimate will however be enough for simple visual localization tasks for now. I have a more
             # overarching goal of sorting out LiDAR as the continuous-time sensor that it is once we get the first
             # version of the devkit out.
-            dumped_timestamps = np.load(ff)["data"]["timestamp"].ravel()
+            dumped_timestamps_gps = np.load(ff)["data"]["timestamp"].ravel()
 
     if len(errors) > 0:
         _logger.error("Found %d errors reading LiDAR for indexing purposes!!!", len(errors))
@@ -569,8 +576,8 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger, index_version: in
     lidar_info = []
     # Please read the above detailed comment for what we mean by "LiDAR time".
     lidar_times = []
-    for idx, (andrei_timestamp, (_, lidar_uri, min_time, max_time, mean_time, p50_time, shape)) in enumerate(
-        zip(dumped_timestamps, all_lidar_meta_info)
+    for idx, (andrei_timestamp_gps, (_, lidar_uri, min_time, max_time, mean_time, p50_time, shape)) in enumerate(
+        zip(dumped_timestamps_gps, all_lidar_meta_info)
     ):
         # NOTE(andrei): LIDAR is rolling shutter...
         # if idx % 200 == 0:
@@ -582,9 +589,13 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger, index_version: in
         #     # print(f"dmin/dmax: {dmin}/{dmax}")
         num_points, pcd_dim = shape
         assert 3 == pcd_dim
+        andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
 
-        lidar_info.append((andrei_timestamp, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
-        lidar_times.append(andrei_timestamp)
+        # The 'dumped at' time should be within the LiDAR sweep time range.
+        assert abs(andrei_timestamp_unix - mean_time) < 1.0, f"{andrei_timestamp_unix = } too far from {min_time = }"
+
+        lidar_info.append((andrei_timestamp_unix, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
+        lidar_times.append(andrei_timestamp_unix)
 
     lidar_times = np.array(lidar_times, dtype=np.float64)
 

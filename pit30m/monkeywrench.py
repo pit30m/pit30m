@@ -629,11 +629,11 @@ class MonkeyWrench:
         print(f"Wrote index(es) to: {out_index_fpath}")
 
     def index_lidar_debug(self, log_index, reindex=False, index_version: int = 1):
-        log_id = self.all_logs[log_index]
+        log_id = str(self.all_logs[log_index])
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
         print("=" * 80)
-        return self.index_lidar(log_id, reindex=reindex, index_version=index_version, out_index_dir=None)
+        return self.index_lidar(log_id, lidar_name=VELODYNE_NAME, reindex=reindex, index_version=index_version, out_index_dir=None)
 
     def index_lidar(
         self,
@@ -674,7 +674,7 @@ class MonkeyWrench:
             str(exists_npy),
             str(exists_npz),
         )
-        index = build_lidar_index(self._root, log_reader, lidar_dir, self._logger)
+        index = build_lidar_index(self._root, log_reader, lidar_dir, self._logger, index_version=index_version)
 
         out_fs.makedirs(out_index_dir, exist_ok=True)
         with out_fs.open(out_index_fpath, "wb") as out_f:
@@ -682,6 +682,10 @@ class MonkeyWrench:
         with out_fs.open(out_index_fpath_npz, "wb") as out_f:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
+
+    def modernize_lidar(self):
+        # XXX(andrei): Implement simple LIDAR modernizer - it will speed up indexing too!
+        pass
 
     def check_all_cameras_by_index(
         self,
