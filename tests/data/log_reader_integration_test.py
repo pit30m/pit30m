@@ -21,8 +21,10 @@ def _real_log_reader(real_map: Map) -> LogReader:
 @fixture(name="real_log_reader_with_test_partition")
 def _real_log_reader_test_query(real_map: Map) -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
-    return LogReader("s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/",
-                     partitions={GeoPartition.TEST,  QueryBasePartition.QUERY})
+    return LogReader(
+        "s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/", partitions={GeoPartition.TEST, QueryBasePartition.QUERY}
+    )
+
 
 @fixture(name="real_log_reader_with_partition")
 def _real_log_reader_with_partition() -> LogReader:
