@@ -407,7 +407,7 @@ class LogReader:
 
     @cached_property
     def raw_wgs84_poses_dense(self) -> np.ndarray:
-        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by timestamp.
+        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by their UNIX timestamp.
 
         TODO(andrei): Degrees or radians?
 
@@ -418,7 +418,7 @@ class LogReader:
         for wgs84 in raw:
             wgs84_data.append(
                 (
-                    wgs84["timestamp"],
+                    gps_seconds_to_utc(wgs84["timestamp"]).timestamp(),
                     wgs84["longitude"],
                     wgs84["latitude"],
                     wgs84["altitude"],
@@ -427,8 +427,8 @@ class LogReader:
                     wgs84["heading"],
                 )
             )
-        wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
-        return wgs84_data
+        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]))
+        return wgs84_data_np
 
     def get_image(self, cam_name: CamName, idx: int) -> CameraImage:
         """Loads a camera image by index in log, used in torch data loading."""
