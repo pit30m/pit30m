@@ -27,7 +27,7 @@ memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 class CameraImage:
     # TODO consider replacing the cam with a Camera object which can be used to get the intrinsics and stuff
     image: np.ndarray
-    cam_name: str
+    cam_name: CamName
     capture_timestamp: float
     shutter_time_s: float
     gain_db: float
@@ -39,10 +39,9 @@ class LiDARFrame:
     xyz_sensor: np.ndarray
     intensity: np.ndarray
     point_times: np.ndarray
-    laser_theta: np.ndarray = None
-    raw_power: np.ndarray = None
-    laser_id: np.ndarray = None
-    # ['laser_theta', 'seconds', 'raw_power', 'intensity', 'points', 'points_H_sensor', 'laser_id']
+    laser_theta: Optional[np.ndarray] = None
+    raw_power: Optional[np.ndarray] = None
+    laser_id: Optional[np.ndarray] = None
 
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
@@ -110,7 +109,7 @@ class LogReader:
         log_root_uri: str,
         pose_fname: str = "all_poses.npz",
         wgs84_pose_fname: str = "wgs84.npz",
-        map: Map = None,
+        map: Optional[Map] = None,
         index_version: int = 0,
         partitions: Optional[Set[Partition]] = None,
     ):
@@ -429,7 +428,17 @@ class LogReader:
                     wgs84["heading"],
                 )
             )
-        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]))
+        wgs84_dtype = np.dtype(
+            [
+                ("timestamp", np.float64),
+                ("longitude", np.float64),
+                ("latitude", np.float64),
+                ("altitude", np.float64),
+                ("roll", np.float64),
+                ("pitch", np.float64),
+                ("heading", np.float64),
+            ])
+        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]), dtype=np.dtype(wgs84_dtype))
         return wgs84_data_np
 
     def get_image(self, cam_name: CamName, idx: int) -> CameraImage:

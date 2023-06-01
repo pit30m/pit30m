@@ -4,7 +4,7 @@ import shlex
 import subprocess
 import tempfile
 from functools import cached_property
-from typing import Union
+from typing import Iterable, Union
 from urllib.parse import urlparse
 
 import fire
@@ -32,7 +32,7 @@ class Pit30MCLI:
         self,
         out_dir: str,
         log_id: str = "e9511854-f657-47bd-c9d3-047187cfc663",
-        chunks: Union[int, tuple[int]] = (17, 18),
+        chunks: Union[int, Iterable[int]] = (17, 18),
     ) -> None:
         """Bakes a multicam video from a log URI. Requires `ffmpeg` to be installed.
 
@@ -43,7 +43,7 @@ class Pit30MCLI:
         in_fs = fsspec.filesystem(urlparse(self._data_root).scheme, anon=True)
         out_fs = fsspec.filesystem(urlparse(out_dir).scheme)
         if isinstance(chunks, int):
-            chunks = chunks
+            chunks = (chunks,)
 
         # Clockwise wide camera names, with the front wide in the middle
         cams_clockwise = [
@@ -61,7 +61,7 @@ class Pit30MCLI:
 
                 sample_img_uris = [
                     entry
-                    for chunk in chunks
+                    for chunk in list(chunks)
                     for entry in in_fs.ls(os.path.join(ld, f"{chunk:04d}"))
                     if entry.endswith("webp")
                 ]
