@@ -54,8 +54,8 @@ UTM_ZONE_LETTER = "N"
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
 
 # Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
-# continuous or map-relative poses, not the raw poses. '?' entries are bool but this does not register for some arcane
-# reason.
+# continuous or map-relative poses, not the raw poses. '?' entries are bool but numpy represents them at '?' for an
+# unknown reason.
 RAW_POSE_DTYPE = np.dtype(
     [
         ("transmission_time", "<f8"),
@@ -279,8 +279,8 @@ class LogReader:
         In practice, users should use the camera/LiDAR iterators instead.
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        with self.fs.open(pose_fpath, "rb") as wgs84_f:
-            return np.load(wgs84_f)["data"]
+        with self.fs.open(pose_fpath, "rb") as raw_pose_f:
+            return np.load(raw_pose_f)["data"]
 
     @cached_property
     def continuous_pose_dense(self) -> np.ndarray:
@@ -373,7 +373,7 @@ class LogReader:
         xyzs = rfn.structured_to_unstructured(mrp[["x", "y", "z"]])
 
         # Handle submap IDs which were truncated upon encoded due to ending with a zero.
-        submaps = [UUID(bytes=submap_uuid_bytes).ljust(16, b"\x00") for submap_uuid_bytes in mrp["submap_id"]]
+        submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
             xyzs = self._map.to_utm(xyzs, submaps)
