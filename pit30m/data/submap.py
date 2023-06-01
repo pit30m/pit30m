@@ -31,14 +31,14 @@ LOG_ID_TO_MISSING_SUBMAPS = {
         UUID("1a8132d0-2634-4ad0-e433-ce5987ef0120"),
     ],
 }
+# Flattens (k -> [v]) to a flat list of all v's
+KNOWN_MISSING_SUBMAP_IDS = [submap_id for submap_ids in LOG_ID_TO_MISSING_SUBMAPS.values() for submap_id in submap_ids]
 
 BLANK_UUID = UUID("00000000-0000-0000-0000-000000000000")
 
 # test-query poses have been sanitized from the dataset and are not available. The sanitization includes the submap ID,
 # which for these entries has been replaced with a null UUID.
-KNOWN_MISSING_SUBMAPS = [submap_id for submap_ids in LOG_ID_TO_MISSING_SUBMAPS.values() for submap_id in submap_ids] + [
-    BLANK_UUID
-]
+EXPECTED_INVALID_SUBMAPS = KNOWN_MISSING_SUBMAP_IDS + [BLANK_UUID]
 
 
 class Singleton(type):
@@ -120,7 +120,7 @@ class Map(metaclass=Singleton):
             try:
                 off_utm.append(self._submap_to_utm[map_uuid])
             except KeyError:
-                if not strict and map_uuid in KNOWN_MISSING_SUBMAPS:
+                if not strict and map_uuid in EXPECTED_INVALID_SUBMAPS:
                     off_utm.append([np.nan, np.nan])
                 else:
                     raise SubmapPoseNotFoundException(map_uuid) from KeyError

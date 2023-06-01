@@ -75,20 +75,20 @@ def test_anonymized_entry():
         [0.0, 0.0, 0.0]
     ])
     utm_poses = map_.to_utm(mrp_xyz_zeros, [blank_uuid], strict=False)
-    assert np.allclose(utm_poses, np.array([[np.nan, np.nan, np.nan]]), equal_nan=True)
+    assert np.array_equal(utm_poses, np.array([[np.nan, np.nan, np.nan]]), equal_nan=True)
 
     mrp_xyz_nonzeros = np.array([
         [1.0, 1.0, 1.0],
         [2.0, 2.0, 2.0],
     ])
     utm_poses = map_.to_utm(mrp_xyz_nonzeros, [blank_uuid, blank_uuid], strict=False)
-    assert np.allclose(utm_poses, np.array([[np.nan, np.nan, np.nan], [np.nan, np.nan, np.nan]]), equal_nan=True)
+    assert np.array_equal(utm_poses, np.array([[np.nan, np.nan, np.nan], [np.nan, np.nan, np.nan]]), equal_nan=True)
 
     mrp_xyz_nans = np.array([
         [np.nan, np.nan, np.nan],
     ])
     utm_poses = map_.to_utm(mrp_xyz_nans, [blank_uuid], strict=False)
-    assert np.allclose(utm_poses, np.array([[np.nan, np.nan, np.nan]]), equal_nan=True)
+    assert np.array_equal(utm_poses, np.array([[np.nan, np.nan, np.nan]]), equal_nan=True)
 
 def test_missing_submap_utm():
     """Integration test for handling the very few submaps with no UTM coordinates."""
