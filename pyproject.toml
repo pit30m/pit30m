@@ -52,6 +52,7 @@ torch = "^1.13"
 torchdata = "^0.5"
 pylint = "^2.16"
 boto3 = "^1"
+ruff = "^0.0.270"
 
 [build-system]
 requires = ["poetry-core"]
@@ -87,3 +88,5 @@ profile = "black"
 [tool.mypy]
 plugins = "numpy.typing.mypy_plugin"
 
+[tool.ruff]
+line-length = 120 # consistent witth black
