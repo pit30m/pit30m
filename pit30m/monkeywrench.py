@@ -278,7 +278,9 @@ class MonkeyWrench:
             print(f"{sensor.value + ':':<40} {count: 6d}")
         print("=" * 80)
 
-    def stat_sensors(self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 1):
+    def stat_sensors(
+        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 1
+    ):
         """Gets statistics over the sensors in the dataset.
 
         Args:
@@ -633,7 +635,9 @@ class MonkeyWrench:
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
         print("=" * 80)
-        return self.index_lidar(log_id, lidar_name=VELODYNE_NAME, reindex=reindex, index_version=index_version, out_index_dir=None)
+        return self.index_lidar(
+            log_id, lidar_name=VELODYNE_NAME, reindex=reindex, index_version=index_version, out_index_dir=None
+        )
 
     def index_lidar(
         self,

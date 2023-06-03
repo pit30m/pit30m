@@ -511,8 +511,8 @@ def build_camera_index(
 
 
 def build_lidar_index(
-        in_root: str, log_reader: LogReader, lidar_dir: str, _logger: logging.Logger, index_version: int
-    ) -> np.ndarray:
+    in_root: str, log_reader: LogReader, lidar_dir: str, _logger: logging.Logger, index_version: int
+) -> np.ndarray:
     """Internal function to build an index for a LiDAR in a log."""
     _logger.info("Reading continuous pose data")
     cp_dense = log_reader.continuous_pose_dense
