@@ -417,8 +417,6 @@ def build_camera_index(
     matched_timestamps_cp = cp_times[cp_index]
     deltas_cp = np.abs(matched_timestamps_cp - image_times)
 
-    unindexed_frames = []
-    status = []
     raw_index = []
     for row_idx, ((img_fpath, img_data), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in enumerate(
         zip(res, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp)

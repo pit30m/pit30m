@@ -75,7 +75,7 @@ class Pit30MCLI:
                 if not out_fs.exists(out_img_dir):
                     out_fs.mkdir(out_img_dir)
                 print("ETL for", cam)
-                res = self._read_pool(delayed(copy_img)(img_uri, out_img_dir) for img_uri in sample_img_uris)
+                self._read_pool(delayed(copy_img)(img_uri, out_img_dir) for img_uri in sample_img_uris)
 
                 framerate = 10
                 subprocess.run(

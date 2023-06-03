@@ -17,7 +17,7 @@ except ImportError as err:
 
 
 from pit30m.camera import CamName
-from pit30m.data.log_reader import CameraImage, LiDARFrame, LogReader
+from pit30m.data.log_reader import CameraImage, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 

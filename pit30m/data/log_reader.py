@@ -2,7 +2,7 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Any, Iterator, Optional, Set, Tuple
+from typing import Iterator, Optional, Set, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 

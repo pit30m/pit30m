@@ -235,7 +235,7 @@ class MonkeyWrench:
         """
         self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        res = self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
         # # TODO(andrei): Turn the misc diagnosis into a mini report too.
         # if len(res) > 0:
         #     print("WARNING: misc non-sensor data had errors. See above for more information.")
@@ -595,7 +595,7 @@ class MonkeyWrench:
         if out_index_dir is None:
             out_index_dir = os.path.join(cam_dir, "index")
 
-        in_scheme = urlparse(self._root).scheme
+        urlparse(self._root).scheme
         out_scheme = urlparse(out_index_dir).scheme
         # in_fs = fsspec.filesystem(in_scheme)
         out_fs = fsspec.filesystem(out_scheme)
@@ -987,7 +987,7 @@ class MonkeyWrench:
         try:
             mrp = log_reader.map_relative_poses_dense
             assert mrp["time"].min() > 0
-        except (RuntimeError, ValueError) as err:
+        except (RuntimeError, ValueError):
             errors.append(("map_relative_poses_dense", "invalid"))
 
         try:
