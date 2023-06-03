@@ -275,7 +275,8 @@ class LogReader:
     def raw_pose_data(self) -> npt.NDArray[RAW_POSE_DTYPE]:
         """Returns the internal raw pose array, which needs manual association with other data types. 100Hz.
 
-        In practice, users should use the camera/LiDAR iterators instead.
+        In practice, users should use the camera/LiDAR iterators instead. The raw arrays are full of possibly confusing
+        or unexpected aspects, e.g., GPS instead of UNIX time.
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
         with self.fs.open(pose_fpath, "rb") as raw_pose_f:
@@ -287,13 +288,15 @@ class LogReader:
 
         Not useful for global localization, since each log will have its own coordinate system, but useful for SLAM-like
         evaluation, since you will have a continuous pose trajectory.
+
+        Pose times are UNIX seconds.
         """
         pose_data = []
-        # TODO(andrei): Document the timestamps carefully.
         for pose in self.raw_pose_data:
             pose_data.append(
                 (
-                    pose["capture_time"],
+                    # TODO(julieta) The overhead of this conversion might be very large at scale. Consider vectorizing
+                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["continuous"]["x"],
                     pose["continuous"]["y"],
@@ -308,7 +311,7 @@ class LogReader:
 
     @cached_property
     def map_relative_poses_dense(self) -> np.ndarray:
-        """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap.
+        """T x 9 array with unix time, validity, submap ID, and the 6-DoF pose within that submap.
 
         WARNING:
             - As of 2023-02, the submaps are not 100% globally consistent. Topometric pose accuracy is cm-level, but
@@ -325,12 +328,12 @@ class LogReader:
         # The data also has pose and velocity covariance information, but I have never used directly so I don't know
         # if it's well-calibrated.
         pose_data = []
-        # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
             # TODO(andrei): Custom, interpretable dtype!
             pose_data.append(
                 (
-                    pose["capture_time"],
+                    # TODO(julieta) consider vectorizing
+                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["map_relative"]["submap"],
                     pose["map_relative"]["x"],
@@ -406,7 +409,7 @@ class LogReader:
 
     @cached_property
     def raw_wgs84_poses_dense(self) -> np.ndarray:
-        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by timestamp.
+        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by their UNIX timestamp.
 
         TODO(andrei): Degrees or radians?
 
@@ -417,7 +420,7 @@ class LogReader:
         for wgs84 in raw:
             wgs84_data.append(
                 (
-                    wgs84["timestamp"],
+                    gps_seconds_to_utc(wgs84["timestamp"]).timestamp(),
                     wgs84["longitude"],
                     wgs84["latitude"],
                     wgs84["altitude"],
@@ -426,8 +429,8 @@ class LogReader:
                     wgs84["heading"],
                 )
             )
-        wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
-        return wgs84_data
+        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]))
+        return wgs84_data_np
 
     def get_image(self, cam_name: CamName, idx: int) -> CameraImage:
         """Loads a camera image by index in log, used in torch data loading."""
@@ -461,8 +464,12 @@ class LogReader:
     def get_lidar(self, idx: int) -> LiDARFrame:
         """Loads the LiDAR scan for the given relative path, used in torch data loading."""
         index_entry = self.get_lidar_geo_index()[idx]
-        # TODO(julieta) re-dump the indices so that they include the correct path
-        rel_path = index_entry["rel_path"].strip() + "z.lz4"
+        rel_path = index_entry["rel_path"].strip()
+        if self._index_version == 0:
+            # TODO(julieta) re-dump the indices so that they include the correct path and remove this once we get rid of
+            # v0 indexes.
+            rel_path += "z.lz4"
+
         fpath = os.path.join(self.lidar_root, rel_path)
         with self.fs.open(fpath, "rb") as f_compressed:
             with lz4.frame.open(f_compressed, "rb") as f:

@@ -43,13 +43,13 @@ def leap(date):
     return bisect.bisect(LEAP_DATES, date)
 
 
-def gps_seconds_to_utc(gps_secs):
+def gps_seconds_to_utc(gps_secs) -> datetime:
     gps_epoch = datetime(1980, 1, 6, 0, 0, 0)
     date_before_leaps = gps_epoch + timedelta(seconds=gps_secs)
     return date_before_leaps - timedelta(seconds=leap(date_before_leaps))
 
 
-def gps2utc(week, secs):
+def gps2utc(week, secs) -> datetime:
     """
     :param week: GPS week number, i.e. 1866
     :param secs: number of seconds since the beginning of `week`

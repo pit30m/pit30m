@@ -1,32 +1,36 @@
 """Utility functions for timing, data association, and indexing."""
 
+import logging
 import math
 import multiprocessing as mp
 import os
 from urllib.parse import urlparse
 
 import fsspec
-import ipdb
 import lz4
 import numpy as np
 from joblib import Memory, Parallel, delayed
 
+from pit30m.data.log_reader import LogReader
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
+from pit30m.time_utils import gps_seconds_to_utc
 from pit30m.util import print_list_with_limit
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
 MAX_IMG_RELPATH_LEN = 22  # = len("0090/000000.night.webp")
-MAX_LIDAR_RELPATH_LEN = 14  # = len("007959.npz.lz4")
+MAX_LIDAR_RELPATH_LEN = 15  # = len("0000/007959.npz")
+START_OF_2011_UNIX = 1293861600
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 # Please refer to the NumPy documentation for exact details on type dimensions.
 # https://numpy.org/doc/stable/reference/arrays.dtypes.html
+
+# Deprecated, please use V0.
 CAM_INDEX_V0_0_DTYPE = np.dtype(
     [
-        # TODO-LOW(andrei): Index a number and day/night to save space.
-        ("rel_path", str, MAX_IMG_RELPATH_LEN),
-        # TODO(andrei): This is currently a GPS timestamp. Need to update to UNIX when (re)building the index.
+        ("rel_path", str, MAX_LIDAR_RELPATH_LEN),
+        # NOTE(andrei): GPS timestamp in the pre-release index.
         ("img_time", np.double),
         ("shutter_s", np.double),
         ("seq_counter", np.int64),
@@ -60,8 +64,85 @@ CAM_INDEX_V0_0_DTYPE = np.dtype(
         ("utm_z", np.double),  # TODO(andrei): Make sure you populate UTM Z (altitude) eventually
     ]
 )
+CAM_INDEX_V1_0_DTYPE = np.dtype(
+    [
+        # TODO-LOW(andrei): Index a number and day/night to save space.
+        ("rel_path", str, MAX_IMG_RELPATH_LEN),
+        # Unix timestamp
+        ("img_time", np.double),
+        ("shutter_s", np.double),
+        ("seq_counter", np.int64),
+        ("gain_db", np.double),
+        ("cp_present", bool),
+        ("cp_valid", bool),
+        ("cp_time_s", np.double),
+        ("cp_x", np.double),
+        ("cp_y", np.double),
+        ("cp_z", np.double),
+        ("cp_roll", np.double),
+        ("cp_pitch", np.double),
+        ("cp_yaw", np.double),
+        ("mrp_present", bool),
+        ("mrp_valid", bool),
+        ("mrp_time", np.double),
+        ("mrp_submap_id", bytes, 16),
+        ("mrp_x", np.double),
+        ("mrp_y", np.double),
+        ("mrp_z", np.double),
+        ("mrp_roll", np.double),
+        ("mrp_pitch", np.double),
+        ("mrp_yaw", np.double),
+        # UTM coordinates are provided for CONVENIENCE, computed from MRP based on the v0 (unrefined)
+        # submap UTM coordinates. Ideally you'll eventually want to use the 'Map' class and compute your
+        # own UTMs once Andrei B. manages to release refined submap UTMs.
+        ("utm_present", bool),
+        ("utm_valid", bool),
+        ("utm_x", np.double),  # Easting
+        ("utm_y", np.double),  # Northing
+        ("utm_z", np.double),  # Altitude
+    ]
+)
+
 
 LIDAR_INDEX_V0_0_DTYPE = np.dtype(
+    [
+        ("rel_path", str, 14),
+        ("lidar_time", np.double),
+        ("lidar_min_time", np.double),
+        ("lidar_max_time", np.double),
+        ("lidar_mean_time", np.double),
+        ("lidar_median_time", np.double),
+        ("num_points", np.int64),
+        ("cp_present", bool),
+        ("cp_valid", bool),
+        ("cp_time_s", np.double),
+        ("cp_x", np.double),
+        ("cp_y", np.double),
+        ("cp_z", np.double),
+        ("cp_roll", np.double),
+        ("cp_pitch", np.double),
+        ("cp_yaw", np.double),
+        ("mrp_present", bool),
+        ("mrp_valid", bool),
+        ("mrp_time", np.double),
+        ("mrp_submap_id", bytes, 16),
+        ("mrp_x", np.double),
+        ("mrp_y", np.double),
+        ("mrp_z", np.double),
+        ("mrp_roll", np.double),
+        ("mrp_pitch", np.double),
+        ("mrp_yaw", np.double),
+        # UTM coordinates are provided for CONVENIENCE, computed from MRP based on the v0 (unrefined)
+        # submap UTM coordinates. Ideally you'll eventually want to use the 'Map' class and compute your
+        # own UTMs once Andrei B. manages to release refined submap UTMs.
+        ("utm_present", bool),
+        ("utm_valid", bool),
+        ("utm_x", np.double),  # Easting
+        ("utm_y", np.double),  # Northing
+        ("utm_z", np.double),  # Altitude
+    ]
+)
+LIDAR_INDEX_V1_0_DTYPE = np.dtype(
     [
         ("rel_path", str, MAX_LIDAR_RELPATH_LEN),
         ("lidar_time", np.double),
@@ -96,7 +177,7 @@ LIDAR_INDEX_V0_0_DTYPE = np.dtype(
         ("utm_valid", bool),
         ("utm_x", np.double),  # Easting
         ("utm_y", np.double),  # Northing
-        ("utm_z", np.double),  # TODO(andrei): Make sure you populate UTM Z (altitude) eventually
+        ("utm_z", np.double),  # Altitude
     ]
 )
 
@@ -115,22 +196,35 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
     meta_uri = img_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
     with fsspec.open(meta_uri) as meta_f:
         meta = np.load(meta_f, allow_pickle=True).tolist()
-        timestamp_s = float(meta["capture_seconds"])
+        timestamp_gps_s = float(meta["capture_seconds"])
+
+        # We basically assert the timestamp we read is actually GPS time. Uber ATG did not exist in 2010!
+        assert timestamp_gps_s < START_OF_2011_UNIX
         # Not used
         # transmission_s = float(meta["transmission_seconds"])
+        timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
 
-        entry = (timestamp_s, float(meta["shutter_seconds"]), int(meta["sequence_counter"]), float(meta["gain_db"]))
+        entry = (
+            timestamp_unix_s,
+            float(meta["shutter_seconds"]),
+            int(meta["sequence_counter"]),
+            float(meta["gain_db"]),
+        )
         return img_uri, entry
 
 
 @memory.cache(verbose=0)
 def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
-    """Returns LiDAR timing metadata."""
-    # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
+    """Returns LiDAR timing metadata.
+
+    All returned timestamps are UNIX timestamps.
+    """
     with fsspec.open(lidar_uri) as compressed_f:
         with lz4.frame.open(compressed_f, "rb") as f:
             lidar_data = np.load(f)
-            point_times = lidar_data["seconds"]
+            point_times_gps = lidar_data["seconds"]
+            # See the camera metadata function for why we assert this.
+            assert np.min(point_times_gps) < START_OF_2011_UNIX
 
             if lidar_data["points"].ndim != 2 or lidar_data["points"].shape[-1] != 3:
                 return (
@@ -170,13 +264,22 @@ def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
                     "{} vs. {} points".format(lidar_data["seconds"].shape, lidar_data["points"].shape),
                 )
 
+            # Assumption - no leap second during the sweep.
+            first_point_gps = point_times_gps[0]
+            first_point_unix = gps_seconds_to_utc(first_point_gps).timestamp()
+            assert first_point_unix > first_point_gps
+            naive_delta = first_point_unix - point_times_gps[0]
+            assert naive_delta > 0
+
+            point_times_unix = point_times_gps + naive_delta
+
             return (
                 "OK",
                 lidar_uri,
-                point_times.min(),
-                point_times.max(),
-                point_times.mean(),
-                np.median(point_times),
+                point_times_unix.min(),
+                point_times_unix.max(),
+                point_times_unix.mean(),
+                np.median(point_times_unix),
                 lidar_data["points"].shape,
             )
 
@@ -232,7 +335,9 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
     return result
 
 
-def build_camera_index(in_root, log_reader, cam_dir, _logger):
+def build_camera_index(
+    in_root: str, log_reader: LogReader, cam_dir: str, logger: logging.Logger, index_version: int
+) -> np.ndarray:
     """Internal function to build an index for a sensor in a log.
 
     Grabs all available images and tries to associate them with poses by timestamp, creating an index in numpy binary
@@ -243,22 +348,28 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
     Please refer to the LogReader documentation and the project README for details on how poses work and what MRP and CP
     means.
     """
-    _logger.info("Reading continuous pose data")
+    logger.info("Reading continuous pose data")
     cp_dense = log_reader.continuous_pose_dense
     cp_times = np.array(cp_dense[:, 0])
     in_scheme = urlparse(in_root).scheme
     in_fs = fsspec.filesystem(in_scheme)
+    if index_version == 0:
+        camera_index_dtype = CAM_INDEX_V0_0_DTYPE
+    elif index_version == 1:
+        camera_index_dtype = CAM_INDEX_V1_0_DTYPE
+    else:
+        raise ValueError(f"Unknown index version {index_version}")
 
-    _logger.info("Reading UTM and MRP")
+    logger.info("Reading UTM and MRP")
     # Note that UTM is inferred from MRP via (very much imperfect) submap UTMs
-    utm_poses = log_reader.utm_poses_dense
+    _, utm_poses = log_reader.utm_poses_dense
     mrp_poses = log_reader.map_relative_poses_dense
-    assert len(mrp_poses) == len(utm_poses)
+    assert len(mrp_poses) == len(utm_poses), f"{len(mrp_poses) = } != {len(utm_poses) = }"
     mrp_times = np.array(mrp_poses["time"])
 
-    _logger.info("Listing all images from %s", cam_dir)
+    logger.info("Listing all images from %s", cam_dir)
     image_uris = cached_glob_images(cam_dir, in_fs)
-    _logger.info("There are %d images in %s", len(image_uris), cam_dir)
+    logger.info("There are %d images in %s", len(image_uris), cam_dir)
 
     h = len(image_uris) / 10.0 / 3600.0
     print(f"{h:.2f} hours of driving")
@@ -278,30 +389,30 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
     #
     # This subsequently got a fair bit slower once I actually parsed the npy, oh well
     pool = Parallel(n_jobs=mp.cpu_count() * 8, verbose=1, batch_size=8)
-    _logger.info("Fetching metadata...")
+    logger.info("Fetching metadata...")
     res = pool(delayed(fetch_metadata_for_image)(x) for x in image_uris)
-    _logger.info("Fetched %d results", len(res))
+    logger.info("Fetched %d results", len(res))
 
     image_times = np.array([float(entry[1][0]) for entry in res])
-    _logger.info("Associating...")
-    _logger.info(
+    logger.info("Associating...")
+    logger.info(
         "%s %s %s %s",
         image_times.dtype,
         str(image_times.shape),
         str(image_times[0]) if len(image_times) else "n/A",
         str(type(image_times[0])) if len(image_times) else "n/A",
     )
-    _logger.info("%s %s %s %s", mrp_times.dtype, str(mrp_times.shape), str(mrp_times[0]), str(type(mrp_times[0])))
+    logger.info("%s %s %s %s", mrp_times.dtype, str(mrp_times.shape), str(mrp_times[0]), str(type(mrp_times[0])))
     assert np.all(mrp_times[1:] > mrp_times[:-1])
 
     utm_and_mrp_index = associate(image_times, mrp_times, max_delta_s=-1.0)
-    _logger.info("Associating complete.")
+    logger.info("Associating complete.")
     matched_timestamps_mrp = mrp_times[utm_and_mrp_index]
     deltas_mrp = np.abs(matched_timestamps_mrp - image_times)
 
-    _logger.info("Associating CP...")
+    logger.info("Associating CP...")
     cp_index = associate(image_times, cp_times, max_delta_s=-1.0)
-    _logger.info("Associating complete.")
+    logger.info("Associating complete.")
     matched_timestamps_cp = cp_times[cp_index]
     deltas_cp = np.abs(matched_timestamps_cp - image_times)
 
@@ -386,7 +497,8 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
             )
         )
 
-    index = np.array(raw_index, dtype=CAM_INDEX_V0_0_DTYPE)
+    index = np.array(raw_index, dtype=camera_index_dtype)
+    index = np.sort(index, order="img_time")
 
     cp_p = index["cp_present"]
     print("CP total:", len(cp_p))
@@ -398,7 +510,9 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
     return index
 
 
-def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
+def build_lidar_index(
+    in_root: str, log_reader: LogReader, lidar_dir: str, _logger: logging.Logger, index_version: int
+) -> np.ndarray:
     """Internal function to build an index for a LiDAR in a log."""
     _logger.info("Reading continuous pose data")
     cp_dense = log_reader.continuous_pose_dense
@@ -406,11 +520,18 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
     in_scheme = urlparse(in_root).scheme
     in_fs = fsspec.filesystem(in_scheme)
 
+    if index_version == 0:
+        lidar_dtype = LIDAR_INDEX_V0_0_DTYPE
+    elif index_version == 1:
+        lidar_dtype = LIDAR_INDEX_V1_0_DTYPE
+    else:
+        raise ValueError(f"Unknown index version {index_version}")
+
     _logger.info("Reading UTM and MRP")
     # Note that UTM is inferred from MRP via (very much imperfect) submap UTMs
-    utm_poses = log_reader.utm_poses_dense
+    _, utm_poses = log_reader.utm_poses_dense
     mrp_poses = log_reader.map_relative_poses_dense
-    assert len(mrp_poses) == len(utm_poses)
+    assert len(mrp_poses) == len(utm_poses), f"{len(mrp_poses) = } != {len(utm_poses) = }"
     mrp_times = np.array(mrp_poses["time"])
 
     _logger.info("Listing all LiDAR sweeps from %s", lidar_dir)
@@ -440,7 +561,7 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
             # This estimate will however be enough for simple visual localization tasks for now. I have a more
             # overarching goal of sorting out LiDAR as the continuous-time sensor that it is once we get the first
             # version of the devkit out.
-            dumped_timestamps = np.load(ff)["data"]["timestamp"].ravel()
+            dumped_timestamps_gps = np.load(ff)["data"]["timestamp"].ravel()
 
     if len(errors) > 0:
         _logger.error("Found %d errors reading LiDAR for indexing purposes!!!", len(errors))
@@ -455,8 +576,8 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
     lidar_info = []
     # Please read the above detailed comment for what we mean by "LiDAR time".
     lidar_times = []
-    for idx, (andrei_timestamp, (_, lidar_uri, min_time, max_time, mean_time, p50_time, shape)) in enumerate(
-        zip(dumped_timestamps, all_lidar_meta_info)
+    for idx, (andrei_timestamp_gps, (_, lidar_uri, min_time, max_time, mean_time, p50_time, shape)) in enumerate(
+        zip(dumped_timestamps_gps, all_lidar_meta_info)
     ):
         # NOTE(andrei): LIDAR is rolling shutter...
         # if idx % 200 == 0:
@@ -468,9 +589,13 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
         #     # print(f"dmin/dmax: {dmin}/{dmax}")
         num_points, pcd_dim = shape
         assert 3 == pcd_dim
+        andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
 
-        lidar_info.append((andrei_timestamp, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
-        lidar_times.append(andrei_timestamp)
+        # The 'dumped at' time should be within the LiDAR sweep time range.
+        assert abs(andrei_timestamp_unix - mean_time) < 1.0, f"{andrei_timestamp_unix = } too far from {min_time = }"
+
+        lidar_info.append((andrei_timestamp_unix, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
+        lidar_times.append(andrei_timestamp_unix)
 
     lidar_times = np.array(lidar_times, dtype=np.float64)
 
@@ -591,7 +716,8 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
             )
         )
 
-    index = np.array(raw_index, dtype=LIDAR_INDEX_V0_0_DTYPE)
+    index = np.array(raw_index, dtype=lidar_dtype)
+    index = np.sort(index, order="lidar_time")
 
     cp_p = index["cp_present"]
     print("CP total:", len(cp_p))

@@ -61,6 +61,9 @@ Package development, testing, and releasing is performed with `poetry`. If you j
  3. Develop away
     - run commands like `poetry run python -m pit30m.cli`
  4. Test with `poetry run pytest`
+    - Advanced command: `poetry run pytest -ff --new-first --quiet --color=yes --maxfail=3 -n 4`
+    - This command will run tests, then wait for new changes and test them automatically. Test execution will run in parallel thanks to the `-n 4` argument.
+    - The command lets you get feedback on whether your code change fixed or broke a particular test within seconds.
  5. Remember to run `poetry install` after pulling and/or updating dependencies.
 
 
@@ -99,3 +102,7 @@ The `s3://pit30m/raw` prefix contains lossless image data for a small subset of 
 A fraction of the images in the dataset exhibit artifacts such as a strong purple tint or missing data (white images). An even smaller fraction of these purple images sometimes shows strong blocky compression artifacts. These represent a known (and, at this scale, difficult to avoid) problem; it was already present in the original raw logs from which we generated the public facing benchmark. Perfectly blank images can be detected quite reliably in a data loader or ETL script by checking whether `np.mean(img) > 250`.
 
 On example of a log with many blank (whiteout) images is `8438b1ba-44e2-4456-f83b-207351a99865`.
+
+### Ground Truth Sanitization
+
+Poses belonging to test-query are not available and have been removed with zeroes / NaNs / blank submap IDs in the corresponding pose files and indexes. The long term plan is to use this held-out test query ground truth for a public leaderboard. More information will come in the second half of 2023. In the meantime, there should be a ton of data to iterate on using the publicly available train and val splits.
