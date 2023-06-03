@@ -295,6 +295,7 @@ class LogReader:
         for pose in self.raw_pose_data:
             pose_data.append(
                 (
+                    # TODO(julieta) The overhead of this conversion might be very large at scale. Consider vectorizing
                     gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["continuous"]["x"],
