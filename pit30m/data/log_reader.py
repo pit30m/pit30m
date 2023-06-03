@@ -331,6 +331,7 @@ class LogReader:
             # TODO(andrei): Custom, interpretable dtype!
             pose_data.append(
                 (
+                    # TODO(julieta) consider vectorizing
                     gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["map_relative"]["submap"],
