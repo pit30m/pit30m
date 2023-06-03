@@ -18,6 +18,14 @@ def _real_log_reader(real_map: Map) -> LogReader:
     return LogReader("s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/", map=real_map)
 
 
+@fixture(name="real_log_reader_with_test_partition")
+def _real_log_reader_test_query(real_map: Map) -> LogReader:
+    # Creates a real log reader for a cool log with lots of snow
+    return LogReader(
+        "s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/", partitions={GeoPartition.TEST, QueryBasePartition.QUERY}
+    )
+
+
 @fixture(name="real_log_reader_with_partition")
 def _real_log_reader_with_partition() -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
@@ -44,6 +52,16 @@ def test_real_log_can_fetch_raw_pose_data(real_log_reader: LogReader):
 def test_real_log_can_fetch_raw_wgs84_poses(real_log_reader: LogReader):
     poses = real_log_reader.raw_wgs84_poses
     assert len(poses) > 0
+
+
+def test_real_log_with_test_partition_can_fetch_dense_utm(
+    real_log_reader_with_test_partition: LogReader,
+):
+    mask, poses = real_log_reader_with_test_partition.utm_poses_dense
+    assert np.sum(~np.isnan(poses)) > 0
+    assert len(poses) > 1000, "Expected to have a reasonable number of UTM poses."
+    assert len(poses) == len(mask)
+    assert len(poses) == np.sum(~np.isnan(mask)), "All UTMs must be invalid on a log reading test query data!"
 
 
 def test_lidar_index_is_sorted(real_log_reader: LogReader):

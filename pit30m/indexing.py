@@ -1,5 +1,6 @@
 """Utility functions for timing, data association, and indexing."""
 
+import math
 import multiprocessing as mp
 import os
 from urllib.parse import urlparse
@@ -314,6 +315,7 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
         if delta_mrp_s > 0.10:
             mrp = None
             mrp_present = False
+            utm_present = False
             mrp_valid = False
             mrp_time_s, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
             mrp_submap_id = b"\x00" * 16
@@ -323,10 +325,14 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
             mrp = mrp_poses[pose_idx, ...].tolist()
             utm = utm_poses[pose_idx, ...].tolist()
             mrp_present = True
+            utm_present = True
             mrp_time_s, mrp_valid, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = mrp
-            utm_x, utm_y = utm
-            # TODO(andrei): Update me
-            utm_z = 0
+            utm_x, utm_y, utm_z = utm
+            if math.isnan(utm_x):
+                utm_x = 0.0
+                utm_y = 0.0
+                utm_z = 0.0
+                utm_present = False
 
             # Handle submap IDs which were truncated upon encoded due to ending with a zero.
             mrp_submap_id = mrp_submap_id.ljust(16, b"\x00")
@@ -372,9 +378,8 @@ def build_camera_index(in_root, log_reader, cam_dir, _logger):
                 mrp_roll,
                 mrp_pitch,
                 mrp_yaw,
-                # No MRP === No UTM
-                mrp_present,
-                mrp_present,
+                utm_present,
+                utm_present,
                 utm_x,
                 utm_y,
                 utm_z,
@@ -513,6 +518,7 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
             mrp = None
             mrp_present = False
             mrp_valid = False
+            utm_present = False
             mrp_time_s, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
             mrp_submap_id = b"\x00" * 16
             utm = None
@@ -521,10 +527,14 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
             mrp = mrp_poses[pose_idx, ...].tolist()
             utm = utm_poses[pose_idx, ...].tolist()
             mrp_present = True
+            utm_present = True
             mrp_time_s, mrp_valid, mrp_submap_id, mrp_x, mrp_y, mrp_z, mrp_roll, mrp_pitch, mrp_yaw = mrp
-            utm_x, utm_y = utm
-            # TODO(andrei): Update me
-            utm_z = 0
+            utm_x, utm_y, utm_z = utm
+            if math.isnan(utm_x):
+                utm_x = 0.0
+                utm_y = 0.0
+                utm_z = 0.0
+                utm_present = False
 
             # Handle submap IDs which were truncated upon encoded due to ending with a zero.
             mrp_submap_id = mrp_submap_id.ljust(16, b"\x00")
@@ -572,9 +582,9 @@ def build_lidar_index(in_root, log_reader, lidar_dir, _logger):
                 mrp_roll,
                 mrp_pitch,
                 mrp_yaw,
-                # No MRP === No UTM
-                mrp_present,
-                mrp_present,
+                # No MRP => No UTM
+                utm_present,
+                utm_present,
                 utm_x,
                 utm_y,
                 utm_z,

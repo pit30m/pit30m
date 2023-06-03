@@ -2,7 +2,7 @@
 
 [![Python CI Status](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-![PyPI](https://img.shields.io/pypi/v/pit30m)
+[![PyPI](https://img.shields.io/pypi/v/pit30m)](https://pypi.org/project/pit30m/)
 [![Public on the AWS Open Data Registry](https://shields.io/badge/Open%20Data%20Registry-public-green?logo=amazonaws&style=flat)](#)
 
 ## Overview

@@ -9,6 +9,7 @@ from uuid import UUID
 import fsspec
 import lz4
 import numpy as np
+import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
@@ -51,6 +52,52 @@ UTM_ZONE_NUMBER = 17
 UTM_ZONE_LETTER = "N"
 
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
+
+# Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
+# continuous or map-relative poses, not the raw poses. '?' represents bool.
+RAW_POSE_DTYPE = np.dtype(
+    [
+        ("transmission_time", "<f8"),
+        ("transmission_sequence_counter", "<i8"),
+        ("capture_time", "<f8"),
+        ("poses_and_differentials_valid", "?"),
+        (
+            "map_relative",
+            [
+                ("submap", "S16"),
+                ("x", "<f8"),
+                ("y", "<f8"),
+                ("z", "<f8"),
+                ("yaw", "<f8"),
+                ("pitch", "<f8"),
+                ("roll", "<f8"),
+                ("pose_covariance", "<f8", (6, 6)),
+                ("valid", "?"),
+            ],
+        ),
+        (
+            "continuous",
+            [
+                ("x", "<f8"),
+                ("y", "<f8"),
+                ("z", "<f8"),
+                ("yaw", "<f8"),
+                ("pitch", "<f8"),
+                ("roll", "<f8"),
+                ("pose_covariance", "<f8", (6, 6)),
+                ("vx", "<f8"),
+                ("vy", "<f8"),
+                ("vz", "<f8"),
+                ("roll_rate", "<f8"),
+                ("pitch_rate", "<f8"),
+                ("yaw_rate", "<f8"),
+                ("velocity_covariance", "<f8", (6, 6)),
+                ("acceleration", "<f8", (3, 1)),
+                ("valid", "?"),
+            ],
+        ),
+    ]
+)
 
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
@@ -225,16 +272,14 @@ class LogReader:
             return data
 
     @cached_property
-    def raw_pose_data(self) -> np.ndarray:
-        """Returns the raw pose array, which needs manual association with other data types. 100Hz.
+    def raw_pose_data(self) -> npt.NDArray[RAW_POSE_DTYPE]:
+        """Returns the internal raw pose array, which needs manual association with other data types. 100Hz.
 
         In practice, users should use the camera/LiDAR iterators instead.
-
-        TODO(andrei): Document dtype (users now have to manually check dtype to learn).
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        with self.fs.open(pose_fpath, "rb") as in_compressed_f:
-            return np.load(in_compressed_f)["data"]
+        with self.fs.open(pose_fpath, "rb") as raw_pose_f:
+            return np.load(raw_pose_f)["data"]
 
     @cached_property
     def continuous_pose_dense(self) -> np.ndarray:
@@ -318,24 +363,23 @@ class LogReader:
     def utm_poses_dense(self) -> Tuple[np.ndarray, np.ndarray]:
         """UTM poses for the log, ordered by time.
 
-        TODO(andrei): Update to provide altitude.
-
         Returns:
             A tuple with two elements:
-              - An n-long boolean array indicating whether the poses are valid
-              - An n-by-2 array with the UTM xy coordinates of the poses
+                - An n-long boolean array indicating whether the poses are valid
+                - An n-by-3 array with the UTM xy coordinates and altitudes of the poses
         """
         mrp = self.map_relative_poses_dense
         xyzs = rfn.structured_to_unstructured(mrp[["x", "y", "z"]])
+
         # Handle submap IDs which were truncated upon encoded due to ending with a zero.
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
-            xys = self._map.to_utm(xyzs, submaps)
+            xyzs = self._map.to_utm(xyzs, submaps)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
 
-        return mrp["valid"], xys
+        return mrp["valid"], xyzs
 
     @cached_property
     def raw_wgs84_poses(self) -> np.ndarray:
