@@ -437,7 +437,8 @@ class LogReader:
                 ("roll", np.float64),
                 ("pitch", np.float64),
                 ("heading", np.float64),
-            ])
+            ]
+        )
         wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]), dtype=np.dtype(wgs84_dtype))
         return wgs84_data_np
 
