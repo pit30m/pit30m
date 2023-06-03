@@ -54,8 +54,7 @@ UTM_ZONE_LETTER = "N"
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
 
 # Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
-# continuous or map-relative poses, not the raw poses. '?' entries are bool but numpy represents them at '?' for an
-# unknown reason.
+# continuous or map-relative poses, not the raw poses. '?' represents bool.
 RAW_POSE_DTYPE = np.dtype(
     [
         ("transmission_time", "<f8"),
