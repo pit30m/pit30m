@@ -214,11 +214,12 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
 
 
 @memory.cache(verbose=0)
-def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
+def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, ...]:
     """Returns LiDAR timing metadata.
 
     All returned timestamps are UNIX timestamps.
     """
+    # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
     with fsspec.open(lidar_uri) as compressed_f:
         with lz4.frame.open(compressed_f, "rb") as f:
             lidar_data = np.load(f)

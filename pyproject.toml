@@ -84,3 +84,6 @@ exclude = '''
 [tool.isort]
 profile = "black"
 
+[tool.mypy]
+plugins = "numpy.typing.mypy_plugin"
+

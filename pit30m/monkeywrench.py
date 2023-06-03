@@ -64,8 +64,8 @@ cache = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 @dataclass
 class CamReportSummary:
     n_ok: int
-    warnings: List[str] = None
-    errors: List[str] = None
+    warnings: Optional[List[str]] = None
+    errors: Optional[List[str]] = None
 
     @property
     def n_warns(self) -> int:

@@ -2,14 +2,13 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Iterator, Optional, Set, Tuple
+from typing import Any, Iterator, Optional, Set, Tuple
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
 import lz4
 import numpy as np
-import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
@@ -271,7 +270,7 @@ class LogReader:
             return data
 
     @cached_property
-    def raw_pose_data(self) -> npt.NDArray[RAW_POSE_DTYPE]:
+    def raw_pose_data(self) -> np.ndarray:
         """Returns the internal raw pose array, which needs manual association with other data types. 100Hz.
 
         In practice, users should use the camera/LiDAR iterators instead. The raw arrays are full of possibly confusing

@@ -1,6 +1,6 @@
 import os
 import pickle as pkl
-from typing import Iterable
+from typing import Any
 from uuid import UUID
 
 import numpy as np
@@ -42,7 +42,7 @@ EXPECTED_INVALID_SUBMAPS = KNOWN_MISSING_SUBMAP_IDS + [BLANK_UUID]
 
 
 class Singleton(type):
-    _instances = {}
+    _instances: dict[type, Any] = {}
 
     def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
@@ -91,7 +91,7 @@ class Map(metaclass=Singleton):
         crs_wgs84 = CRS.from_epsg(WGS84_CODE)
         self._pit30m_utm_to_wgs84 = Transformer.from_crs(crs_utm, crs_wgs84)
 
-    def to_utm(self, map_poses_xyz: np.ndarray, submap_ids: Iterable[UUID], strict: bool = True) -> np.ndarray:
+    def to_utm(self, map_poses_xyz: np.ndarray, submap_ids: list[UUID], strict: bool = True) -> np.ndarray:
         """Returns corresponding UTM coordinates for the given pose + submap ID combinations.
 
         Assumes all poses are within the same UTM zone, which holds for all of Pit30M.
@@ -125,16 +125,16 @@ class Map(metaclass=Singleton):
                 else:
                     raise SubmapPoseNotFoundException(map_uuid) from KeyError
 
-        off_utm = np.array(off_utm)
+        off_utm_np = np.array(off_utm)
         result = np.array(map_poses_xyz)
-        result[:, :2] += off_utm
+        result[:, :2] += off_utm_np
         # Make sure NaN rows are all NaNs
-        nan_mask = np.isnan(off_utm[:, 0])
+        nan_mask = np.isnan(off_utm_np[:, 0])
         result[nan_mask, :] = np.nan
 
         return result
 
-    def to_wgs84(self, map_poses, submap_ids: Iterable[UUID], strict: bool = True) -> np.ndarray:
+    def to_wgs84(self, map_poses, submap_ids: list[UUID], strict: bool = True) -> np.ndarray:
         """Converts map-relative poses to WGS84 (lat, lon, alt) coordinates.
 
         Args:
