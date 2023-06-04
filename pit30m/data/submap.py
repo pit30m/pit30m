@@ -1,7 +1,6 @@
 import os
 import pickle as pkl
 from typing import Iterable
-from urllib.parse import urlparse
 from uuid import UUID
 
 import numpy as np
@@ -18,6 +17,28 @@ class SubmapPoseNotFoundException(Exception):
 
     def __init__(self, submap_id):
         super().__init__(f"Pose not found for submap {submap_id}")
+
+
+# These logs are known to contain at least one submap for which we do not have UTM.
+LOG_ID_TO_MISSING_SUBMAPS = {
+    # Crash on 2023-01-29 -- 5dedc51d-5bd3-4026-fd93-dabb4744ab23 submap UUID was missing
+    # Visual inspection seems to indicate this is in the city of pittsburgh, so not a highway.
+    "327b7948-4e5f-4d8c-f08b-4fc44a067996": [
+        UUID("5dedc51d-5bd3-4026-fd93-dabb4744ab23"),
+    ],
+    # Found on 2023-02-20 -- 1a8132d0-2634-4ad0-e433-ce5987ef0120 submap UUID was missing
+    "c9e9e7a7-f1cb-4af8-c5c9-3a610cbcc20e": [
+        UUID("1a8132d0-2634-4ad0-e433-ce5987ef0120"),
+    ],
+}
+# Flattens (k -> [v]) to a flat list of all v's
+KNOWN_MISSING_SUBMAP_IDS = [submap_id for submap_ids in LOG_ID_TO_MISSING_SUBMAPS.values() for submap_id in submap_ids]
+
+BLANK_UUID = UUID("00000000-0000-0000-0000-000000000000")
+
+# test-query poses have been sanitized from the dataset and are not available. The sanitization includes the submap ID,
+# which for these entries has been replaced with a null UUID.
+EXPECTED_INVALID_SUBMAPS = KNOWN_MISSING_SUBMAP_IDS + [BLANK_UUID]
 
 
 class Singleton(type):
@@ -70,41 +91,62 @@ class Map(metaclass=Singleton):
         crs_wgs84 = CRS.from_epsg(WGS84_CODE)
         self._pit30m_utm_to_wgs84 = Transformer.from_crs(crs_utm, crs_wgs84)
 
-    def to_utm(self, map_poses_xyz: np.ndarray, submap_ids: Iterable[UUID]) -> np.ndarray:
-        """Returns corresponding UTM coordinates for the given pose + submap ID combinations. Assumes all poses are
-        within the same UTM zone, which holds for all of Pit30M.
-        TODO(andrei): We probably want altitude as well.
+    def to_utm(self, map_poses_xyz: np.ndarray, submap_ids: Iterable[UUID], strict: bool = True) -> np.ndarray:
+        """Returns corresponding UTM coordinates for the given pose + submap ID combinations.
+
+        Assumes all poses are within the same UTM zone, which holds for all of Pit30M.
 
         Args:
-            map_poses_xyz: n-by-3 array of map-relative poses (x, y, z).
-            submap_ids:   n-element array or list with each pose's submap ID.
+            map_poses_xyz:  n-by-3 array of map-relative poses (x, y, z).
+            submap_ids:     n-element array or list with each pose's submap ID.
+            strict:         If True, known-bad submap IDs will raise an exception. If False, they will be ignored and
+                            results will contain NaNs for those poses, leaving the caller to deal with them. Unexpected
+                            missing submaps, i.e., those NOT in 'LOG_ID_TO_MISSING_SUBMAPS' will still raise an
+                            exception.
+
         Returns:
-            An n-by-2 array of MRP poses transformed to UTM coordinates (x, y).
+            An n-by-3 array of MRP poses transformed to UTM coordinates (x, y, alt). x and y represent the easting and
+            northing, while the altitude is the original altitude in the map.
         """
         assert len(map_poses_xyz) == len(submap_ids)
+        assert (
+            map_poses_xyz.ndim == 2 and map_poses_xyz.shape[1] == 3
+        ), f"Must pass N x 3 map pose array, got: {map_poses_xyz.shape}"
 
         off_utm = []
         for map_uuid in submap_ids:
+            if not isinstance(map_uuid, UUID):
+                raise ValueError(f"Invalid submap ID type: {type(map_uuid)})")
             try:
                 off_utm.append(self._submap_to_utm[map_uuid])
-            except KeyError as e:
-                raise SubmapPoseNotFoundException(map_uuid) from KeyError
+            except KeyError:
+                if not strict and map_uuid in EXPECTED_INVALID_SUBMAPS:
+                    off_utm.append([np.nan, np.nan])
+                else:
+                    raise SubmapPoseNotFoundException(map_uuid) from KeyError
 
         off_utm = np.array(off_utm)
-        return map_poses_xyz[:, :2] + off_utm
+        result = np.array(map_poses_xyz)
+        result[:, :2] += off_utm
+        # Make sure NaN rows are all NaNs
+        nan_mask = np.isnan(off_utm[:, 0])
+        result[nan_mask, :] = np.nan
 
-    def to_wgs84(self, map_poses, submap_ids):
-        """Converts map-relative poses to WGS84 (lat, lon) tuples.
+        return result
+
+    def to_wgs84(self, map_poses, submap_ids: Iterable[UUID], strict: bool = True) -> np.ndarray:
+        """Converts map-relative poses to WGS84 (lat, lon, alt) coordinates.
 
         Args:
-            map_poses:    N-dimensional array of map-relative poses ('x' and 'y' fields required).
-            submap_ids:   N-element array or list with each poses's submap ID.
+            map_poses:      N-dimensional array of map-relative poses ('x' and 'y' fields required).
+            submap_ids:     N-element array or list with each poses's submap ID.
+            strict:         Please see 'to_utm'.
 
         Returns:
-            An (N, 2) array of WGS84 (lat, lon).
+            An (N, 3) array of WGS84 (lat, lon, alt).
         """
-        utm_poses = self.to_utm(map_poses, submap_ids)
+        utm_poses = self.to_utm(map_poses, submap_ids, strict=strict)
         # 20x faster than manually looping over the coords in Python
         # pylint: disable=unpacking-non-sequence
         wgs_lat, wgs_lon = self._pit30m_utm_to_wgs84.transform(utm_poses[:, 0, np.newaxis], utm_poses[:, 1, np.newaxis])
-        return np.hstack((wgs_lat, wgs_lon))
+        return np.hstack((wgs_lat, wgs_lon, utm_poses[:, 2, np.newaxis]))

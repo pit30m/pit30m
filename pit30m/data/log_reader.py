@@ -9,6 +9,7 @@ from uuid import UUID
 import fsspec
 import lz4
 import numpy as np
+import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
@@ -56,6 +57,52 @@ PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
 
 # Sensor must be at most this fart from the pose to be considered a match
 SENSOR_TO_POSE_MATCH_EPSILON_S = 0.5
+
+# Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
+# continuous or map-relative poses, not the raw poses. '?' represents bool.
+RAW_POSE_DTYPE = np.dtype(
+    [
+        ("transmission_time", "<f8"),
+        ("transmission_sequence_counter", "<i8"),
+        ("capture_time", "<f8"),
+        ("poses_and_differentials_valid", "?"),
+        (
+            "map_relative",
+            [
+                ("submap", "S16"),
+                ("x", "<f8"),
+                ("y", "<f8"),
+                ("z", "<f8"),
+                ("yaw", "<f8"),
+                ("pitch", "<f8"),
+                ("roll", "<f8"),
+                ("pose_covariance", "<f8", (6, 6)),
+                ("valid", "?"),
+            ],
+        ),
+        (
+            "continuous",
+            [
+                ("x", "<f8"),
+                ("y", "<f8"),
+                ("z", "<f8"),
+                ("yaw", "<f8"),
+                ("pitch", "<f8"),
+                ("roll", "<f8"),
+                ("pose_covariance", "<f8", (6, 6)),
+                ("vx", "<f8"),
+                ("vy", "<f8"),
+                ("vz", "<f8"),
+                ("roll_rate", "<f8"),
+                ("pitch_rate", "<f8"),
+                ("yaw_rate", "<f8"),
+                ("velocity_covariance", "<f8", (6, 6)),
+                ("acceleration", "<f8", (3, 1)),
+                ("valid", "?"),
+            ],
+        ),
+    ]
+)
 
 
 def gps_to_unix_timestamp(gps_seconds: float) -> float:
@@ -263,16 +310,15 @@ class LogReader:
             return data
 
     @cached_property
-    def raw_pose_data(self) -> np.ndarray:
-        """Returns the raw pose array, which needs manual association with other data types. 100Hz.
+    def raw_pose_data(self) -> npt.NDArray[RAW_POSE_DTYPE]:
+        """Returns the internal raw pose array, which needs manual association with other data types. 100Hz.
 
-        In practice, users should use the camera/LiDAR iterators instead.
-
-        TODO(andrei): Document dtype (users now have to manually check dtype to learn).
+        In practice, users should use the camera/LiDAR iterators instead. The raw arrays are full of possibly confusing
+        or unexpected aspects, e.g., GPS instead of UNIX time.
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
-        with self.fs.open(pose_fpath, "rb") as in_compressed_f:
-            return np.load(in_compressed_f)["data"]
+        with self.fs.open(pose_fpath, "rb") as raw_pose_f:
+            return np.load(raw_pose_f)["data"]
 
     @cached_property
     def continuous_pose_dense(self) -> np.ndarray:
@@ -280,13 +326,15 @@ class LogReader:
 
         Not useful for global localization, since each log will have its own coordinate system, but useful for SLAM-like
         evaluation, since you will have a continuous pose trajectory.
+
+        Pose times are UNIX seconds.
         """
         pose_data = []
-        # TODO(andrei): Document the timestamps carefully.
         for pose in self.raw_pose_data:
             pose_data.append(
                 (
-                    pose["capture_time"],
+                    # TODO(julieta) The overhead of this conversion might be very large at scale. Consider vectorizing
+                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["continuous"]["x"],
                     pose["continuous"]["y"],
@@ -301,7 +349,7 @@ class LogReader:
 
     @cached_property
     def map_relative_poses_dense(self) -> np.ndarray:
-        """T x 9 array with time, validity, submap ID, and the 6-DoF pose within that submap.
+        """T x 9 array with unix time, validity, submap ID, and the 6-DoF pose within that submap.
 
         WARNING:
             - As of 2023-02, the submaps are not 100% globally consistent. Topometric pose accuracy is cm-level, but
@@ -318,12 +366,12 @@ class LogReader:
         # The data also has pose and velocity covariance information, but I have never used directly so I don't know
         # if it's well-calibrated.
         pose_data = []
-        # XXX(andrei): Document the timestamps carefully. Remember that GPS time, if applicable, can be confusing!
         for pose in self.raw_pose_data:
             # TODO(andrei): Custom, interpretable dtype!
             pose_data.append(
                 (
-                    pose["capture_time"],
+                    # TODO(julieta) consider vectorizing
+                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
                     pose["poses_and_differentials_valid"],
                     pose["map_relative"]["submap"],
                     pose["map_relative"]["x"],
@@ -356,24 +404,23 @@ class LogReader:
     def utm_poses_dense(self) -> Tuple[np.ndarray, np.ndarray]:
         """UTM poses for the log, ordered by time.
 
-        TODO(andrei): Update to provide altitude.
-
         Returns:
             A tuple with two elements:
-              - An n-long boolean array indicating whether the poses are valid
-              - An n-by-2 array with the UTM xy coordinates of the poses
+                - An n-long boolean array indicating whether the poses are valid
+                - An n-by-3 array with the UTM xy coordinates and altitudes of the poses
         """
         mrp = self.map_relative_poses_dense
         xyzs = rfn.structured_to_unstructured(mrp[["x", "y", "z"]])
+
         # Handle submap IDs which were truncated upon encoded due to ending with a zero.
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
-            xys = self._map.to_utm(xyzs, submaps)
+            xyzs = self._map.to_utm(xyzs, submaps)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
 
-        return mrp["valid"], xys
+        return mrp["valid"], xyzs
 
     @cached_property
     def raw_wgs84_poses(self) -> np.ndarray:
@@ -400,7 +447,7 @@ class LogReader:
 
     @cached_property
     def raw_wgs84_poses_dense(self) -> np.ndarray:
-        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by timestamp.
+        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by their UNIX timestamp.
 
         TODO(andrei): Degrees or radians?
 
@@ -411,7 +458,7 @@ class LogReader:
         for wgs84 in raw:
             wgs84_data.append(
                 (
-                    wgs84["timestamp"],
+                    gps_seconds_to_utc(wgs84["timestamp"]).timestamp(),
                     wgs84["longitude"],
                     wgs84["latitude"],
                     wgs84["altitude"],
@@ -420,8 +467,8 @@ class LogReader:
                     wgs84["heading"],
                 )
             )
-        wgs84_data = np.array(sorted(wgs84_data, key=lambda x: x[0]))
-        return wgs84_data
+        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]))
+        return wgs84_data_np
 
     def get_image(self, cam_name: CamName, idx: int) -> CameraImage:
         """Loads a camera image by index in log, used in torch data loading."""
@@ -455,8 +502,12 @@ class LogReader:
     def get_lidar(self, idx: int) -> LiDARFrame:
         """Loads the LiDAR scan for the given relative path, used in torch data loading."""
         index_entry = self.get_lidar_geo_index()[idx]
-        # TODO(julieta) re-dump the indices so that they include the correct path
-        rel_path = index_entry["rel_path"].strip() + "z.lz4"
+        rel_path = index_entry["rel_path"].strip()
+        if self._index_version == 0:
+            # TODO(julieta) re-dump the indices so that they include the correct path and remove this once we get rid of
+            # v0 indexes.
+            rel_path += "z.lz4"
+
         fpath = os.path.join(self.lidar_root, rel_path)
         with self.fs.open(fpath, "rb") as f_compressed:
             with lz4.frame.open(f_compressed, "rb") as f:
