@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from pytest import fixture
 
 from pit30m.camera import CamName
@@ -7,18 +8,18 @@ from pit30m.data.partitions import GeoPartition, PreProcessPartition, QueryBaseP
 from pit30m.data.submap import DEFAULT_SUBMAP_INFO_PREFIX, Map
 
 
-@fixture(name="real_map")
+@fixture(name="real_map", scope="session")
 def _real_map() -> Map:
     return Map()
 
 
-@fixture(name="real_log_reader")
+@fixture(name="real_log_reader", scope="session")
 def _real_log_reader(real_map: Map) -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
     return LogReader("s3://pit30m/7e9b5978-0a52-401c-dcd1-65c8d9930ad8/", map=real_map)
 
 
-@fixture(name="real_log_reader_with_test_partition")
+@fixture(name="real_log_reader_with_test_partition", scope="session")
 def _real_log_reader_test_query(real_map: Map) -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
     return LogReader(
@@ -26,7 +27,7 @@ def _real_log_reader_test_query(real_map: Map) -> LogReader:
     )
 
 
-@fixture(name="real_log_reader_with_partition")
+@fixture(name="real_log_reader_with_partition", scope="session")
 def _real_log_reader_with_partition() -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
     return LogReader(
@@ -35,7 +36,7 @@ def _real_log_reader_with_partition() -> LogReader:
     )
 
 
-@fixture(name="real_log_reader_with_two_partitions")
+@fixture(name="real_log_reader_with_two_partitions", scope="session")
 def _real_log_reader_with_two_partition() -> LogReader:
     # Creates a real log reader for a cool log with lots of snow
     return LogReader(

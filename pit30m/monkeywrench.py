@@ -285,7 +285,7 @@ class MonkeyWrench:
         print("=" * 80)
 
     def stat_sensors(
-        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 1
+        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 2
     ):
         """Gets statistics over the sensors in the dataset.
 
@@ -524,7 +524,7 @@ class MonkeyWrench:
         for log_id in tqdm(self.all_logs):
             self.backup_specific_files(original_base_uri, log_id, out_root, files)
 
-    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 1):
+    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 2):
         log_id = self.all_logs[idx]
         print("=" * 80)
         print(f"Indexing log {log_id} ({idx + 1} / {len(self.all_logs)})")
@@ -536,7 +536,7 @@ class MonkeyWrench:
         log_id: str,
         out_index_dir: Optional[str] = None,
         reindex: bool = False,
-        index_version: int = 1,
+        index_version: int = 2,
     ):
         """Create an index of the images in the given log.
 
@@ -572,7 +572,7 @@ class MonkeyWrench:
         index_version: int,
     ):
         """v2 indexer - parallel reading and no image loading. Please see `index_all_cameras` for info."""
-        assert index_version == 1, "v1 is the only currently supported DTYPE"
+        assert index_version == 2, "v2 is the only currently supported DTYPE"
         map = Map()
 
         if isinstance(cam_name, str):
@@ -719,7 +719,7 @@ class MonkeyWrench:
         cam_name: Union[str, CamName],
         sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION,
         in_index_dir: Optional[str] = None,
-        index_version: int = 0,
+        index_version: int = 2,
         min_num_samples: int = 500,
     ):
         """Samples camera data and checks its integrity. Camera needs to have been indexed first."""
