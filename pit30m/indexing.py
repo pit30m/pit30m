@@ -68,7 +68,7 @@ CAM_INDEX_V1_0_DTYPE = np.dtype(
     [
         # TODO-LOW(andrei): Index a number and day/night to save space.
         ("rel_path", str, MAX_IMG_RELPATH_LEN),
-        # Unix timestamp
+        # GPS timestamp
         ("img_time", np.double),
         ("shutter_s", np.double),
         ("seq_counter", np.int64),
@@ -202,10 +202,10 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
         assert timestamp_gps_s < START_OF_2011_UNIX
         # Not used
         # transmission_s = float(meta["transmission_seconds"])
-        timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
+        # timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
 
         entry = (
-            timestamp_unix_s,
+            timestamp_gps_s,
             float(meta["shutter_seconds"]),
             int(meta["sequence_counter"]),
             float(meta["gain_db"]),
@@ -217,7 +217,7 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
 def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, ...]:
     """Returns LiDAR timing metadata.
 
-    All returned timestamps are UNIX timestamps.
+    All returned timestamps are GPS timestamps.
     """
     # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
     with fsspec.open(lidar_uri) as compressed_f:
@@ -266,21 +266,21 @@ def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, ...]:
                 )
 
             # Assumption - no leap second during the sweep.
-            first_point_gps = point_times_gps[0]
-            first_point_unix = gps_seconds_to_utc(first_point_gps).timestamp()
-            assert first_point_unix > first_point_gps
-            naive_delta = first_point_unix - point_times_gps[0]
-            assert naive_delta > 0
+            # first_point_gps = point_times_gps[0]
+            # first_point_unix = gps_seconds_to_utc(first_point_gps).timestamp()
+            # assert first_point_unix > first_point_gps
+            # naive_delta = first_point_unix - point_times_gps[0]
+            # assert naive_delta > 0
 
-            point_times_unix = point_times_gps + naive_delta
+            # point_times_unix = point_times_gps + naive_delta
 
             return (
                 "OK",
                 lidar_uri,
-                point_times_unix.min(),
-                point_times_unix.max(),
-                point_times_unix.mean(),
-                np.median(point_times_unix),
+                point_times_gps.min(),
+                point_times_gps.max(),
+                point_times_gps.mean(),
+                np.median(point_times_gps),
                 lidar_data["points"].shape,
             )
 
@@ -588,13 +588,13 @@ def build_lidar_index(
         #     # print(f"dmin/dmax: {dmin}/{dmax}")
         num_points, pcd_dim = shape
         assert 3 == pcd_dim
-        andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
+        # andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
 
         # The 'dumped at' time should be within the LiDAR sweep time range.
-        assert abs(andrei_timestamp_unix - mean_time) < 1.0, f"{andrei_timestamp_unix = } too far from {min_time = }"
+        assert abs(andrei_timestamp_gps - mean_time) < 1.0, f"{andrei_timestamp_gps = } too far from {min_time = }"
 
-        lidar_info.append((andrei_timestamp_unix, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
-        lidar_times.append(andrei_timestamp_unix)
+        lidar_info.append((andrei_timestamp_gps, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
+        lidar_times.append(andrei_timestamp_gps)
 
     lidar_times_np = np.array(lidar_times, dtype=np.float64)
 

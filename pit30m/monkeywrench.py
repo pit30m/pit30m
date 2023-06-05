@@ -524,6 +524,14 @@ class MonkeyWrench:
         for log_id in tqdm(self.all_logs):
             self.backup_specific_files(original_base_uri, log_id, out_root, files)
 
+    # def index_all_cameras_range(self, idx_start, idx_end, reindex=False, index_version: int = 2):
+    #     for idx in range(idx_start, idx_end):
+    #         self.index_all_cameras_debug(idx, reindex=reindex, index_version=index_version)
+
+    def gen_index_all_cameras(self, start_idx, end_idx, reindex=False, index_version: int = 2):
+        for idx in range(start_idx, end_idx):
+            print(f"poetry run python -m pit30m.monkeywrench index_all_cameras_debug {idx} --reindex={str(reindex)} --index-version {index_version}")
+
     def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 2):
         log_id = self.all_logs[idx]
         print("=" * 80)
