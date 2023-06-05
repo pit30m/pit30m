@@ -376,7 +376,8 @@ class LogReader:
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
-            xyzs = self._map.to_utm(xyzs, submaps)
+            # XXX: check with Julieta, is it OK to keep this strict?
+            xyzs = self._map.to_utm(xyzs, submaps, strict=False)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
 

@@ -625,6 +625,7 @@ class MonkeyWrench:
         log_id = str(self.all_logs[log_index])
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
+        print(f"Version: {index_version:03d} | Reindex: {reindex}")
         print("=" * 80)
         return self.index_lidar(
             log_id, lidar_name=VELODYNE_NAME, reindex=reindex, index_version=index_version, out_index_dir=None
