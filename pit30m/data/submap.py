@@ -113,6 +113,9 @@ class Map(metaclass=Singleton):
             map_poses_xyz.ndim == 2 and map_poses_xyz.shape[1] == 3
         ), f"Must pass N x 3 map pose array, got: {map_poses_xyz.shape}"
 
+        if len(map_poses_xyz) == 0:
+            return np.empty((0, 3))
+
         off_utm = []
         for map_uuid in submap_ids:
             if not isinstance(map_uuid, UUID):
