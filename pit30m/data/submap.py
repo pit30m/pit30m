@@ -127,6 +127,7 @@ class Map(metaclass=Singleton):
 
         off_utm = np.array(off_utm)
         result = np.array(map_poses_xyz)
+        breakpoint()
         result[:, :2] += off_utm
         # Make sure NaN rows are all NaNs
         nan_mask = np.isnan(off_utm[:, 0])

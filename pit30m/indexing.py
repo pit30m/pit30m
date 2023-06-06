@@ -4,18 +4,21 @@ import logging
 import math
 import multiprocessing as mp
 import os
+from typing import TYPE_CHECKING, Tuple
 from urllib.parse import urlparse
 
 import fsspec
 import lz4
 import numpy as np
 from joblib import Memory, Parallel, delayed
-from scipy.interpolate import interp1d
 
-from pit30m.data.log_reader import LogReader
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
 from pit30m.time_utils import gps_seconds_to_utc
 from pit30m.util import print_list_with_limit
+
+if TYPE_CHECKING:
+    # To prevent circular import
+    from pit30m.data.log_reader import LogReader
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
 MAX_IMG_RELPATH_LEN = 22  # = len("0090/000000.night.webp")
@@ -285,8 +288,19 @@ def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
             )
 
 
-def associate_np(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_delta_s: float = 0.5) -> np.ndarray:
-    """Same as associate, but fully vectorized"""
+def associate_np(
+    query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_delta_s: float = 0.5
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Similar associate, but fully vectorized
+
+    Returns:
+        np.ndarray: The same length as query_timestamps, with the index of the associated target_timestamps
+        np.ndarray: The same length as query_timestamps, True if the association is over max_delta_s
+
+    NOTE(julieta)
+    This is called every time we load an index, and therefore it matters that it be fast.
+    We could take advantage of both arrays being sorted and implement this in C or Rust to speed things up.
+    """
     result = np.zeros(query_timestamps.shape, dtype=np.int64)
 
     assert target_timestamps.shape[0] > 0
@@ -314,14 +328,19 @@ def associate_np(query_timestamps: np.ndarray, target_timestamps: np.ndarray, ma
     set_with_larger = np.logical_and(rest, np.logical_not(smaller_idx))
     target_idx[set_with_larger] = nxt[set_with_larger]
 
-    # Sanity-check recompute the deltas
+    # NOTE(julieta) we could re-use the appropriate entries from delta_prev and delta_next here, but this is clearer
     delta_s = np.abs(query_timestamps - target_timestamps[target_idx])
 
     over = delta_s > max_delta_s
 
     if max_delta_s > 0:
         n_over = np.sum(over)
-        print(f"WARNING: There are {n_over} timestamp associations with gap > {max_delta_s:.3f}s")
+        # breakpoint()
+        # NOTE(julieta) log instead of print
+        if n_over:
+            print(
+                f"WARNING: There are {n_over} / {len(over)} timestamp associations with gap > {max_delta_s:.3f}s. Max is {delta_s.max():.3f}s"
+            )
 
     result = target_idx
     return result, over
@@ -382,7 +401,7 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
 
 
 def build_camera_index(
-    in_root: str, log_reader: LogReader, cam_dir: str, logger: logging.Logger, index_version: int
+    in_root: str, log_reader: "LogReader", cam_dir: str, logger: logging.Logger, index_version: int
 ) -> np.ndarray:
     """Internal function to build an index for a sensor in a log.
 
@@ -557,7 +576,7 @@ def build_camera_index(
 
 
 def build_lidar_index(
-    in_root: str, log_reader: LogReader, lidar_dir: str, _logger: logging.Logger, index_version: int
+    in_root: str, log_reader: "LogReader", lidar_dir: str, _logger: logging.Logger, index_version: int
 ) -> np.ndarray:
     """Internal function to build an index for a LiDAR in a log."""
     _logger.info("Reading continuous pose data")

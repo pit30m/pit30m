@@ -18,11 +18,10 @@ from PIL import Image
 from pit30m.camera import CamName
 from pit30m.data.partitions import Partition
 from pit30m.data.submap import Map, SubmapPoseNotFoundException
+from pit30m.indexing import associate, associate_np
 from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
-
-from pit30m.indexing import associate_np
 
 
 @dataclass
@@ -54,6 +53,7 @@ UTM_ZONE_NUMBER = 17
 UTM_ZONE_LETTER = "N"
 
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
+LATEST_INDEX_VERSION = 1
 
 # Sensor must be at most this fart from the pose to be considered a match
 SENSOR_TO_POSE_MATCH_EPSILON_S = 0.5
@@ -116,7 +116,7 @@ class LogReader:
         pose_fname: str = "all_poses.npz",
         wgs84_pose_fname: str = "wgs84.npz",
         map: Map = None,
-        index_version: int = 0,
+        index_version: int = LATEST_INDEX_VERSION,
         partitions: Optional[Iterable[Partition]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
@@ -158,6 +158,7 @@ class LogReader:
             1. "capture_time": float 64 series of pose GPS timestamps
             2. "mask": boolean indicating whether each pose is included in the requested partitions
         """
+        # breakpoint()
         n_sensor_measurements = len(self.raw_pose_data)
         partition_indices = self._partition_assigments
         partition_indices += (np.full(n_sensor_measurements, True),)
@@ -165,10 +166,15 @@ class LogReader:
         combined_indices_mask = np.logical_and.reduce(partition_indices)
         timestamps = self.raw_pose_data["capture_time"]
 
+        # HACK: Convert the raw poses' timestamps to UNIX to make them comparable to those... everywhere else
+        for i, timestamp in enumerate(timestamps):
+            if not np.isnan(timestamp):
+                timestamps[i] = gps_to_unix_timestamp(timestamp)
+        timestamps = rfn.unstructured_to_structured(timestamps[:, np.newaxis], dtype=[("timestamp", "<f8")])
+
         combined_indices_mask = rfn.unstructured_to_structured(
             combined_indices_mask[:, np.newaxis], dtype=[("mask", "?")]
         )
-        timestamps = rfn.unstructured_to_structured(timestamps[:, np.newaxis], dtype=[("timestamp", "<f8")])
 
         mask_with_timestamps = rfn.merge_arrays((timestamps, combined_indices_mask))
         return mask_with_timestamps
@@ -185,6 +191,7 @@ class LogReader:
             pose to a requested partition.
         """
 
+        # breakpoint()
         fs = fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
 
         partition_indices = tuple()
@@ -247,8 +254,27 @@ class LogReader:
         index = index[np.argsort(index[sort_by])]
         return index
 
+    def filter_partitions(self, query_timestamps: np.ndarray, max_delta_s: float = 0.2) -> np.ndarray:
+        """Returns a boolean mask that indicates which sensor readings belong to the requested partitions."""
+
+        # Now, leave only the subset that matches the requested partition
+        partitions_mask = self._partitions_mask
+
+        # Associate with partititions mask
+        matched_indices, over = associate_np(query_timestamps, partitions_mask["timestamp"], max_delta_s=max_delta_s)
+        matched_bool = partitions_mask["mask"][matched_indices]
+        matched_bool[over] = False
+
+        # Filter with the obtained mask
+        return matched_bool
+
     @lru_cache(maxsize=16)
-    def get_cam_geo_index(self, cam_name: CamName = CamName.MIDDLE_FRONT_WIDE, sort_by: str = "img_time") -> np.ndarray:
+    def get_cam_geo_index(
+        self,
+        cam_name: CamName = CamName.MIDDLE_FRONT_WIDE,
+        sort_by: str = "img_time",
+        max_delta_s=0.1,
+    ) -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE.
         Args:
             cam_name: name of the camera index to load
@@ -256,7 +282,10 @@ class LogReader:
         Returns:
             A structured numpy array with the camera observations and their metadata.
         """
-        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
+
+        # Get the pre-computed index
+        # TODO(julieta) v0 and v1 have different name formatting on s3
+        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
@@ -265,18 +294,9 @@ class LogReader:
 
         index = index[np.argsort(index[sort_by])]
 
-        # Return only the subset that matches the requested partition
-        partitions_mask = self._partitions_mask
-
-        # NOTE(julieta) this will return the nearest neighbour on the left, which might not be the nearest neighbour overall
-        # However, since dense poses come at 100Hz, this is probably fine
-        matched_indices, over = associate_np(index["img_time"], partitions_mask["timestamp"], max_delta_s=0.1)
-
-        matched_bool = partitions_mask["mask"][matched_indices]
-        matched_bool[over] = False
-
-        # Filter with the obtained mask
-        index = index[matched_bool]
+        # Filter by partitions
+        partitions_mask = self.filter_partitions(index["img_time"], max_delta_s)
+        index = index[partitions_mask]
 
         return index
 
@@ -345,6 +365,11 @@ class LogReader:
                 )
             )
         pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
+
+        # # Filter by partitions
+        # partitions_mask = self.filter_partitions(pose_index[:, 0], max_delta_s=0.2)
+        # pose_index = pose_index[partitions_mask]
+
         return pose_index
 
     @cached_property
@@ -398,6 +423,10 @@ class LogReader:
                 ]
             ),
         )
+
+        partitions_mask = self.filter_partitions(pose_index["time"], max_delta_s=0.2)
+        pose_index = pose_index[partitions_mask]
+
         return pose_index
 
     @cached_property
@@ -416,9 +445,14 @@ class LogReader:
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
-            xyzs = self._map.to_utm(xyzs, submaps)
+            xyzs = self._map.to_utm(xyzs, submaps, strict=False)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
+
+        # Filter by partitions
+        partitions_mask = self.filter_partitions(mrp["time"], max_delta_s=0.2)
+        mrp = mrp[partitions_mask]
+        xyzs = xyzs[partitions_mask]
 
         return mrp["valid"], xyzs
 
