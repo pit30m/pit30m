@@ -5,6 +5,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import random
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
@@ -629,8 +630,19 @@ class MonkeyWrench:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote index(es) to: {out_index_fpath}")
 
-    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 1):
-        log_id = str(self.all_logs[log_index])
+    def gen_index_lidar(self, start_idx, end_idx, reindex=False, index_version: int = 2, shuffle_seed: int = 42):
+        for idx in range(start_idx, end_idx):
+            print(
+                f"poetry run python -m pit30m.monkeywrench index_lidar_debug {idx} "
+                f"--reindex={str(reindex)} --index-version {index_version} --shuffle-seed {shuffle_seed}"
+            )
+
+
+    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 2, shuffle_seed: int = 42):
+        all_logs = list(self.all_logs)
+        random.seed(shuffle_seed)
+        random.shuffle(all_logs)
+        log_id = str(all_logs[log_index])
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
         print(f"Version: {index_version:03d} | Reindex: {reindex}")
@@ -647,7 +659,7 @@ class MonkeyWrench:
         reindex: bool,
         index_version: int,
     ):
-        assert index_version == 1, "v1 is the only currently supported DTYPE"
+        assert index_version == 2, "v2 is the only currently supported DTYPE"
         map = Map()
 
         self._logger.info("Setting up log reader to process LiDAR %s", lidar_name)

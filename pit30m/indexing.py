@@ -102,6 +102,7 @@ CAM_INDEX_V1_0_DTYPE = np.dtype(
         ("utm_z", np.double),  # Altitude
     ]
 )
+CAM_INDEX_V2_0_DTYPE = CAM_INDEX_V1_0_DTYPE
 
 
 LIDAR_INDEX_V0_0_DTYPE = np.dtype(
@@ -180,6 +181,7 @@ LIDAR_INDEX_V1_0_DTYPE = np.dtype(
         ("utm_z", np.double),  # Altitude
     ]
 )
+LIDAR_INDEX_V2_0_DTYPE = LIDAR_INDEX_V1_0_DTYPE
 
 
 def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
@@ -358,6 +360,8 @@ def build_camera_index(
         camera_index_dtype = CAM_INDEX_V0_0_DTYPE
     elif index_version == 1:
         camera_index_dtype = CAM_INDEX_V1_0_DTYPE
+    elif index_version == 2:
+        camera_index_dtype = CAM_INDEX_V2_0_DTYPE
     else:
         raise ValueError(f"Unknown index version {index_version}")
 
@@ -389,7 +393,9 @@ def build_camera_index(
     # 512, 15s = 14.9k
     #
     # This subsequently got a fair bit slower once I actually parsed the npy, oh well
-    pool = Parallel(n_jobs=mp.cpu_count() * 8, verbose=1, batch_size=8)
+    # Lower factor when running inside AWS (4) vs locally (8).
+    factor = 4
+    pool = Parallel(n_jobs=mp.cpu_count() * factor, verbose=1, batch_size=8)
     logger.info("Fetching metadata...")
     res = pool(delayed(fetch_metadata_for_image)(x) for x in image_uris)
     logger.info("Fetched %d results", len(res))
@@ -523,6 +529,8 @@ def build_lidar_index(
         lidar_dtype = LIDAR_INDEX_V0_0_DTYPE
     elif index_version == 1:
         lidar_dtype = LIDAR_INDEX_V1_0_DTYPE
+    elif index_version == 2:
+        lidar_dtype = LIDAR_INDEX_V2_0_DTYPE
     else:
         raise ValueError(f"Unknown index version {index_version}")
 
@@ -540,7 +548,8 @@ def build_lidar_index(
     h = len(lidar_sweep_uris) / 10.0 / 3600.0
     print(f"{h:.2f} hours of driving")
 
-    pool = Parallel(n_jobs=mp.cpu_count() * 4, verbose=1, batch_size=8)
+    factor = 4
+    pool = Parallel(n_jobs=mp.cpu_count() * factor, verbose=1, batch_size=8)
     _logger.info("Fetching metadata...")
     all_lidar_meta_info = pool(delayed(fetch_metadata_for_lidar)(x) for x in lidar_sweep_uris)
     _logger.info("Fetched %d results", len(all_lidar_meta_info))
@@ -591,7 +600,7 @@ def build_lidar_index(
         # andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
 
         # The 'dumped at' time should be within the LiDAR sweep time range.
-        assert abs(andrei_timestamp_gps - mean_time) < 1.0, f"{andrei_timestamp_gps = } too far from {min_time = }"
+        assert abs(andrei_timestamp_gps - mean_time) < 1.0, f"{andrei_timestamp_gps = } too far from {mean_time = }"
 
         lidar_info.append((andrei_timestamp_gps, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
         lidar_times.append(andrei_timestamp_gps)
