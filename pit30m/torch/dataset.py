@@ -17,7 +17,7 @@ except ImportError as err:
 
 
 from pit30m.camera import CamName
-from pit30m.data.log_reader import CameraImage, LiDARFrame, LogReader
+from pit30m.data.log_reader import CameraImage, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
 
@@ -118,8 +118,6 @@ def demo_dataloader(
 
     if isinstance(logs, str):
         logs = [entry.strip() for entry in logs.split(",")]
-
-    logs = [UUID(log) for log in logs]
 
     print("root_uri", root_uri)
     print("logs:", logs)

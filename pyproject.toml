@@ -5,6 +5,7 @@ description = "Development kit for the Pit30M large scale localization dataset"
 authors = ["Andrei Bârsan"]
 license = "MIT"
 readme = "README.md"
+homepage = "https://github.com/pit30m/pit30m"
 classifiers = [
     "Framework :: Robot Framework :: Library",
     "Framework :: Robot Framework :: Tool",
@@ -22,24 +23,21 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-[project.urls]
-"Homepage" = "https://github.com/pit30m/pit30m"
-
 [tool.poetry.dependencies]
 python = "^3.9"
-fsspec = ">=2022"
-s3fs = "*"
-geopandas = ">=0.10"
-pygeos = ">=0.12"
-numpy = ">=1.20"
-fire = ">=0.5"
-joblib = "*"
-pillow = ">=9"
-tqdm = ">=4"
-lz4 = ">=4"
-matplotlib = ">=3.4"
-pyyaml = ">=5"
-utm = ">=0.7.0"
+fsspec = ">=2022"     # seamlessly talk to local or remote (S3) filesystems
+s3fs = "*"            # provides S3 for fsspec
+geopandas = ">=0.10"  # handle geospatial data, e.g. for partitions
+pygeos = ">=0.12"     # backend for geopandas
+numpy = ">=1.20"      # numerical computation, array operations
+fire = ">=0.5"        # helper for command-line interface programs
+joblib = "*"          # parallelization
+pillow = ">=9"        # image processing
+tqdm = ">=4"          # progress bars
+lz4 = ">=4"           # LZ4 compression, similar to gzip but faster, great for loading lots of data
+matplotlib = ">=3.4"  # plotting, visualization, etc.
+pyyaml = ">=5"        # load YAML data, e.g., some of our calibration files
+utm = ">=0.7.0"       # additional geospatial computations concerning UTM projections
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7"
@@ -52,6 +50,9 @@ torch = "^1.13"
 torchdata = "^0.5"
 pylint = "^2.16"
 boto3 = "^1"
+ruff = "^0.0.270"
+mypy = "^1.3.0"
+types-pyyaml = "^6.0.12.10"
 
 [build-system]
 requires = ["poetry-core"]
@@ -84,3 +85,8 @@ exclude = '''
 [tool.isort]
 profile = "black"
 
+[tool.mypy]
+plugins = "numpy.typing.mypy_plugin"
+
+[tool.ruff]
+line-length = 120 # consistent witth black

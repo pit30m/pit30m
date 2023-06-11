@@ -1,13 +1,15 @@
 name: Python CI
 
-on: 
+on:
   pull_request:
   push:
     branches:
       - main
+  # Supports a merge queue
+  merge_group:
 
 env:
-  POETRY_VERSION: 1.3.2
+  POETRY_VERSION: 1.5.1
 
 jobs:
   build:
@@ -15,9 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-      # TODO(andrei): Disabled to save CI minutes. Re-enable this after release.
-        # python-version: ["3.8", "3.9", "3.10"]
-        python-version: ["3.9"]
+        python-version: ["3.9", "3.10"]
 
     steps:
       - uses: actions/checkout@v3
@@ -43,11 +43,11 @@ jobs:
           python -m pip install --upgrade poetry
           poetry install --with=dev
       - name: Check formatting with black
-        run: poetry run black --check --exclude '.*.bak.py' .
-      # TODO(andrei): Enable once library is more mature.
-      # - name: Lint with pylint
+        run: poetry run black . --check
+      - name: Lint with mypy
+        run: poetry run mypy . --ignore-missing-imports
+      # TODO(andrei): Enable pylint with ruff once library is more mature.
       #   run: poetry run pylint .
       - name: Test with pytest
         run: |
-          poetry run pytest
-        # NOTE(andrei): We can pass '-n K' to parallelize tests. (Or just use tox.)
+          poetry run pytest -n 4
