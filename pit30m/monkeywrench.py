@@ -215,7 +215,7 @@ class MonkeyWrench:
         with open(self._log_list_fpath, "r") as f:
             return [UUID(line.strip()) for line in f]
 
-    def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True):
+    def index(self, log_id: str, out_index_dir: Optional[str] = None, check: bool = True, index_version: int = 2):
         """Create index files for the raw data in the dataset.
 
         At dump time, the dataset just contained numbered image files with small associated metadata files. This meant
@@ -233,9 +233,9 @@ class MonkeyWrench:
                                 check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
                                 check its shape too, etc.
         """
-        self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        self.index_all_cameras(log_id=log_id, out_index_dir=out_index_dir, index_version=index_version)
+        self.index_lidar(log_id=log_id, lidar_name=VELODYNE_NAME, out_index_dir=out_index_dir, reindex=False, index_version=index_version)
+        self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_dir, check=check)
         # # TODO(andrei): Turn the misc diagnosis into a mini report too.
         # if len(res) > 0:
         #     print("WARNING: misc non-sensor data had errors. See above for more information.")
@@ -518,21 +518,6 @@ class MonkeyWrench:
         for log_id in tqdm(self.all_logs):
             self.backup_specific_files(original_base_uri, log_id, out_root, files)
 
-    # def index_all_cameras(
-    #     self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True, parallel: bool = True
-    # ):
-    #     if parallel:
-    #         n_jobs = len(CamName)
-    #         print(f"Using exactly {n_jobs} jobs")
-    #         with mp.Pool(processes=n_jobs) as pool:
-    #             pool.starmap(
-    #                 self.index_camera,
-    #                 [(log_id, cam_name, out_index_fpath, check, index) for index, cam_name in enumerate(CamName)],
-    #             )
-    #     else:
-    #         for cam in CamName:
-    #             self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
-
     def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 1):
         log_id = self.all_logs[idx]
         print("=" * 80)
@@ -699,7 +684,7 @@ class MonkeyWrench:
         index_version: int = 0,
     ):
         return self.check_all_cameras(
-            self.all_logs[idx], sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version
+            str(self.all_logs[idx]), sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version
         )
 
     def check_all_cameras(
@@ -772,7 +757,7 @@ class MonkeyWrench:
 
         if len(idx) < min_num_samples:
             self._logger.info("Will just check all images")
-            all_idx = range(len(idx))
+            all_idx = list(range(len(idx)))
         else:
             start_end = 60 * 10
             i_st = range(0, start_end)
@@ -833,7 +818,7 @@ class MonkeyWrench:
 
         return problems, meta
 
-    def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
+    def validate_reports(self, logs: str, check_receipt: bool = True, write_receipt: bool = True):
         """
         Note that this will typically be the command you run locally, as reading a few CSVs for each log is more than
         doable locally.
@@ -961,8 +946,9 @@ class MonkeyWrench:
         else:
             return (False, lidar_status + camera_summary + other_summary)
 
-    def diagnose_misc(self, log_id: str, out_index_fpath: str, check: bool) -> List[Tuple[str, str]]:
+    def diagnose_misc(self, log_id: str, out_index_fpath: Optional[str], check: bool) -> List[Tuple[str, str]]:
         """Diagnoses non-sensor data, like poses, GPS, metadata, etc. Returns a list of errors, empty if all is well."""
+        del out_index_fpath # unused for now
         fs = fsspec.filesystem(urlparse(self._root).scheme)
         log_root_uri = os.path.join(self._root, log_id)
         log_reader = LogReader(log_root_uri=log_root_uri)
@@ -1129,8 +1115,8 @@ class MonkeyWrench:
         # missing is an error.
         if check and len(errors) > 0:
             print(f"{len(errors)} errors found in {log_id}!")
-            for err in errors:
-                print("\t- " + str(err))
+            for error in errors:
+                print("\t- " + str(error))
 
         return errors
 
@@ -1157,7 +1143,7 @@ class MonkeyWrench:
             return (False, "no_report")
 
         ok = 0
-        errors = []
+        errors: list[tuple[str, float, str, str]] = []
         warnings = []
         unmatched_frames = []
 
@@ -1165,7 +1151,7 @@ class MonkeyWrench:
             reader = csv.reader(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
             header = next(reader)
             if len(header) != 4:
-                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+                errors.append(("", -1.0, INVALID_REPORT, "Invalid header: " + str(header)))
             else:
                 for sample_uri, timestamp, status, detail in reader:
                     if status == "OK":
@@ -1177,14 +1163,14 @@ class MonkeyWrench:
                         warnings.append("unmatched frame at " + str(timestamp) + "s, delta_s=" + str(delta_s))
                     else:
                         # print(f"Problem with {sample_uri}: {status}")
-                        errors.append((sample_uri, timestamp, status, detail))
+                        errors.append((sample_uri, float(timestamp), status, detail))
 
         if len(unmatched_frames):
-            max_delta = -1
+            max_delta = -1.0
             clusters = []
-            cur_start = -1
+            cur_start = -1.0
             cur_start_idx = -1
-            prev_ts = -1
+            prev_ts = -1.0
             for idx, (ts, delta_s, sample_uri) in enumerate(unmatched_frames):
                 # print(f"{ts:.3f}", sample_uri.split("/")[-1], delta_s)
 
@@ -1268,8 +1254,8 @@ class MonkeyWrench:
         canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
 
         ok = 0
-        errors = []
-        warnings = []
+        errors: list[tuple[str, float, str, str]] = []
+        warnings: list[tuple[str, float, str, str]] = []
 
         fs = fsspec.filesystem(urlparse(self._root).scheme)
         if check_receipt and fs.isfile(canary_loc):
@@ -1283,7 +1269,7 @@ class MonkeyWrench:
             reader = csv.reader(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
             header = next(reader)
             if len(header) != 4:
-                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+                errors.append(("", -1.0, INVALID_REPORT, "Invalid header: " + str(header)))
             else:
                 for sample_uri, timestamp, status, detail in reader:
                     if status == "OK":
@@ -1293,10 +1279,10 @@ class MonkeyWrench:
                         offset_s = float(detail.rstrip("s"))
                         if offset_s > acceptable_wgs84_delay_s:
                             # Be a little lenient
-                            warnings.append((sample_uri, timestamp, status, detail))
+                            warnings.append((sample_uri, float(timestamp), status, detail))
                     else:
                         # print(f"Problem with {sample_uri}: {status}")
-                        errors.append((sample_uri, timestamp, status, detail))
+                        errors.append((sample_uri, float(timestamp), status, detail))
 
         if len(errors) > 0:
             print(f"Found {len(errors)} errors in {log_id}.")
@@ -1346,7 +1332,7 @@ class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
         return None
 
 
-SafeLoaderIgnoreUnknown.add_constructor(None, SafeLoaderIgnoreUnknown.ignore_unknown)
+SafeLoaderIgnoreUnknown.add_constructor("!binary", SafeLoaderIgnoreUnknown.ignore_unknown)
 
 
 if __name__ == "__main__":
