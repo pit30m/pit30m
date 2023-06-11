@@ -179,10 +179,10 @@ class LogReader:
         """Fetches this log's query base partition from s3"""
         return self._load_partition(QueryBasePartition)
 
-    @cached_property
-    def size_partition(self) -> np.ndarray:
-        """Fetches this log's size partition from s3"""
-        return self._load_partition(SizePartition)
+    # @cached_property
+    # def size_partition(self) -> np.ndarray:
+    #     """Fetches this log's size partition from s3"""
+    #     return self._load_partition(SizePartition)
 
     def partition_to_index(self, partition: Partition) -> np.ndarray:
         """Return the partition index for a given partition type"""
@@ -197,7 +197,7 @@ class LogReader:
         else:
             raise ValueError(f"Unknown partition type: {partition}")
 
-    def partition_assigments(self, partitions: Optional[Iterable[Partition]] = None) -> List[np.ndarray]:
+    def partition_assigments(self, partitions: Optional[Iterable[Partition]] = None) -> Tuple[np.ndarray]:
         """Fetches partition indices from S3 and converts them to boolean arrays according to the requested partition
         values. Note that these partitions are wrt the raw pose data @ 100Hz, not the sensor data; therefore, we must
         index sensor data into those timestamps to find out which partitions they belong to.
@@ -209,10 +209,13 @@ class LogReader:
             A list of boolean arrays. Each array has n_dense_poses entries, and each entry represents membership of the
             pose to a requested partition.
         """
-        partition_indices = list()
-        for partition in partitions:
-            idx = self.partition_to_index(partition)
-            partition_indices.append(partition.value_to_index(partition, idx))
+        partition_indices = tuple()
+        if partitions is not None:
+            for partition in partitions:
+                idx = self.partition_to_index(partition)
+                # partition_indices.append(partition.value_to_index(partition, idx))
+                partition_indices += (partition.value_to_index(partition, idx),)
+
         return partition_indices
 
     def partitions_mask(self, partitions) -> np.ndarray:
