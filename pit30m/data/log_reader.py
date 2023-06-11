@@ -2,7 +2,7 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Iterable, Iterator, Optional, Tuple
+from typing import Iterable, Iterator, Optional, Tuple, Type
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -16,7 +16,13 @@ from numpy.lib import recfunctions as rfn
 from PIL import Image
 
 from pit30m.camera import CamName
-from pit30m.data.partitions import Partition
+from pit30m.data.partitions import (
+    GeoPartition,
+    Partition,
+    PreProcessPartition,
+    QueryBasePartition,
+    SizePartition,
+)
 from pit30m.data.submap import Map, SubmapPoseNotFoundException
 from pit30m.indexing import associate, associate_np
 from pit30m.time_utils import gps_seconds_to_utc
@@ -167,9 +173,9 @@ class LogReader:
         timestamps = self.raw_pose_data["capture_time"]
 
         # HACK: Convert the raw poses' timestamps to UNIX to make them comparable to those... everywhere else
-        for i, timestamp in enumerate(timestamps):
-            if not np.isnan(timestamp):
-                timestamps[i] = gps_to_unix_timestamp(timestamp)
+        # for i, timestamp in enumerate(timestamps):
+        #     if not np.isnan(timestamp):
+        #         timestamps[i] = gps_to_unix_timestamp(timestamp)
         timestamps = rfn.unstructured_to_structured(timestamps[:, np.newaxis], dtype=[("timestamp", "<f8")])
 
         combined_indices_mask = rfn.unstructured_to_structured(
@@ -179,8 +185,36 @@ class LogReader:
         mask_with_timestamps = rfn.merge_arrays((timestamps, combined_indices_mask))
         return mask_with_timestamps
 
-    @property
-    @memory.cache(verbose=0)
+    @cached_property
+    def partition_fs(self):
+        """Filesystem object used to read log data."""
+        return fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
+
+    def _load_partition(self, Partition: Type[Partition]) -> np.ndarray:
+        partition_fpath = os.path.join(PARTITIONS_BASEPATH, Partition.path_name(), f"{self.log_id}.npz")
+        if not self.partition_fs.exists(partition_fpath):
+            raise FileNotFoundError(f"Partition file not found: {partition_fpath}")
+        with self.partition_fs.open(partition_fpath, "rb") as f:
+            return np.load(f)["partition"]
+
+    @cached_property
+    def preprocess_partition(self) -> np.ndarray:
+        """Fetches this log's preprocess partition from s3"""
+        return self.load_partition(PreProcessPartition)
+
+    @cached_property
+    def geo_partition(self) -> np.ndarray:
+        """Fetches this log's geo partition from s3"""
+        return self.load_partition(GeoPartition)
+
+    @cached_property
+    def query_base_partition(self) -> np.ndarray:
+        """Fetches this log's query base partition from s3"""
+        return self.load_partition(QueryBasePartition)
+
+    # @property
+    # @memory.cache(verbose=0)
+    @cached_property
     def _partition_assigments(self) -> Tuple[np.ndarray]:
         """Fetches partition indices from S3 and converts them to boolean arrays according to the reader's partition
         values. Note that these partitions are done wrt the raw pose data @ 100Hz, not the sensor data; therefore,
@@ -196,9 +230,9 @@ class LogReader:
 
         partition_indices = tuple()
         for partition in self.partitions:
-            partition_fpath = os.path.join(PARTITIONS_BASEPATH, partition.path_name, f"{self.log_id}.npz")
+            partition_fpath = os.path.join(PARTITIONS_BASEPATH, partition.path_name(), f"{self.log_id}.npz")
             if not fs.exists(partition_fpath):
-                raise ValueError(f"Partition file not found: {partition_fpath}")
+                raise FileNotFoundError(f"Partition file not found: {partition_fpath}")
 
             with fs.open(partition_fpath, "rb") as f:
                 idx = np.load(f)["partition"]
@@ -245,7 +279,7 @@ class LogReader:
         """
         index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version}.npz")
         if not self.fs.exists(index_fpath):
-            raise ValueError(f"Index file not found: {index_fpath}!")
+            raise FileNotFoundError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
             # TODO(andrei): Pre-sort the indexes at gen time.
@@ -287,7 +321,7 @@ class LogReader:
         # TODO(julieta) v0 and v1 have different name formatting on s3
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
-            raise ValueError(f"Index file not found: {index_fpath}!")
+            raise FileNotFoundError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
             index = np.load(f)["index"]

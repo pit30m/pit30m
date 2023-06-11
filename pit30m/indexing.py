@@ -339,7 +339,7 @@ def associate_np(
         # NOTE(julieta) log instead of print
         if n_over:
             print(
-                f"WARNING: There are {n_over} / {len(over)} timestamp associations with gap > {max_delta_s:.3f}s. Max is {delta_s.max():.3f}s"
+                f"WARNING: There are {n_over} / {len(over)} ({100*n_over/len(over):.2f}%) timestamp associations with gap > {max_delta_s:.3f}s. Max is {delta_s.max():.3f}s"
             )
 
     result = target_idx

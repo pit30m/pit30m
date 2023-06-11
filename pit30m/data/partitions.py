@@ -12,7 +12,7 @@ class Partition(Enum):
     def value_to_index(val: Partition, index: np.ndarray) -> int:
         ...
 
-    @property
+    @classmethod
     @abstractmethod
     def path_name(self) -> str:
         ...
@@ -28,7 +28,7 @@ class PreProcessPartition(Partition):
         assert isinstance(val, PreProcessPartition), f"val must be a PreProcessPartition, not {type(val)=}"
         return index == val.value
 
-    @property
+    @classmethod
     def path_name(self) -> str:
         return "preprocessed_500"
 
@@ -45,7 +45,7 @@ class GeoPartition(Partition):
         assert isinstance(val, GeoPartition), f"val must be a GeoPartition, not {type(val)=}"
         return index == val.value
 
-    @property
+    @classmethod
     def path_name(self) -> str:
         return "train_val_test"
 
@@ -60,7 +60,7 @@ class QueryBasePartition(Partition):
         assert isinstance(val, QueryBasePartition), f"val must be a QueryBasePartition, not {type(val)=}"
         return index == val.value
 
-    @property
+    @classmethod
     def path_name(self) -> str:
         return "query_base_0.7"
 
@@ -83,6 +83,6 @@ class SizePartition(Partition):
 
         raise ValueError(f"Invalid value for SizePartition: {val=}")
 
-    @property
+    @classmethod
     def path_name(self) -> str:
         return "size"
