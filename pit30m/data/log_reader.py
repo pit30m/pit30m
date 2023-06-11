@@ -159,7 +159,6 @@ class LogReader:
     @memory.cache(verbose=0)
     def partition_assignments(self):
         """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
-
         fs = fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
 
         partition_indices = tuple()
@@ -361,11 +360,12 @@ class LogReader:
 
     @cached_property
     def utm_poses_dense(self) -> Tuple[np.ndarray, np.ndarray]:
-        """UTM poses for the log, ordered by time.
+        """UTM poses for the log, ordered by time. Missing poses (e.g., not in the current split) are NaN.
 
         Returns:
             A tuple with two elements:
-                - An n-long boolean array indicating whether the poses are valid
+                - An n-long boolean array indicating whether the poses are valid. A pose can be non-NaN but still be,
+                    invalid i.e., the pose is available but unreliable.
                 - An n-by-3 array with the UTM xy coordinates and altitudes of the poses
         """
         mrp = self.map_relative_poses_dense
@@ -375,7 +375,6 @@ class LogReader:
         submaps = [UUID(bytes=submap_uuid_bytes.ljust(16, b"\x00")) for submap_uuid_bytes in mrp["submap_id"]]
 
         try:
-            # XXX: check with Julieta, is it OK to keep this strict?
             xyzs = self._map.to_utm(xyzs, submaps, strict=False)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e

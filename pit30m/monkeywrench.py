@@ -700,7 +700,7 @@ class MonkeyWrench:
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
 
     def modernize_lidar(self):
-        # XXX(andrei): Implement simple LIDAR modernizer - it will speed up indexing too!
+        # TODO(andrei): Implement simple LIDAR modernizer - it will speed up future indexing too!
         pass
 
     def check_all_cameras_by_index(
