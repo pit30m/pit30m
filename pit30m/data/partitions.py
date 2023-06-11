@@ -31,7 +31,7 @@ class PreProcessPartition(Partition):
 
     @property
     def path_name(self) -> str:
-        return "preprocessed"
+        return "preprocessed_500"
 
 
 # Geographic partition into train/val/test
@@ -63,7 +63,7 @@ class QueryBasePartition(Partition):
 
     @property
     def path_name(self) -> str:
-        return "query_base"
+        return "query_base_0.7"
 
 
 # Size partitioning for mid/tiny/full
