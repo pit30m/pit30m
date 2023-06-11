@@ -45,9 +45,9 @@ jobs:
           poetry install --with=dev
       - name: Check formatting with black
         run: poetry run black --check
-      # TODO(andrei): Enable once library is more mature.
-      # TODO(andrei): Add mypy
-      # - name: Lint with pylint
+      - name: Lint with mypy
+        run: poetry run mypy . --ignore-missing-imports
+      # TODO(andrei): Enable pylint with ruff once library is more mature.
       #   run: poetry run pylint .
       - name: Test with pytest
         run: |
