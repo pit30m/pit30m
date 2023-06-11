@@ -25,6 +25,7 @@ memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 @dataclass
 class CameraImage:
     """Represents an RGB camera image. Timestamps returned by Pit30M log readers are in GPS time."""
+
     # TODO consider replacing the cam with a Camera object which can be used to get the intrinsics and stuff
     image: np.ndarray
     cam_name: CamName
