@@ -69,11 +69,11 @@ class CamReportSummary:
 
     @property
     def n_warns(self) -> int:
-        return len(self.warnings)
+        return len(self.warnings) if self.warnings else 0
 
     @property
     def n_errs(self) -> int:
-        return len(self.errors)
+        return len(self.errors) if self.errors else 0
 
 
 class LogStatus(Enum):
