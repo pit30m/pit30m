@@ -17,9 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-      # TODO(andrei): Disabled to save CI minutes. Re-enable this after release.
-        # python-version: ["3.8", "3.9", "3.10"]
-        python-version: ["3.9"]
+        python-version: ["3.9", "3.10"]
 
     steps:
       - uses: actions/checkout@v3
