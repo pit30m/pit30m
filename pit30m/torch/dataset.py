@@ -117,7 +117,7 @@ def demo_dataloader(
     mp.set_start_method("forkserver")
 
     if isinstance(logs, str):
-        logs= [entry.strip() for entry in logs.split(",")]
+        logs = [entry.strip() for entry in logs.split(",")]
 
     print("root_uri", root_uri)
     print("logs:", logs)

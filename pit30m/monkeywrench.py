@@ -234,7 +234,13 @@ class MonkeyWrench:
                                 check its shape too, etc.
         """
         self.index_all_cameras(log_id=log_id, out_index_dir=out_index_dir, index_version=index_version)
-        self.index_lidar(log_id=log_id, lidar_name=VELODYNE_NAME, out_index_dir=out_index_dir, reindex=False, index_version=index_version)
+        self.index_lidar(
+            log_id=log_id,
+            lidar_name=VELODYNE_NAME,
+            out_index_dir=out_index_dir,
+            reindex=False,
+            index_version=index_version,
+        )
         self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_dir, check=check)
         # # TODO(andrei): Turn the misc diagnosis into a mini report too.
         # if len(res) > 0:
@@ -684,7 +690,10 @@ class MonkeyWrench:
         index_version: int = 0,
     ):
         return self.check_all_cameras(
-            str(self.all_logs[idx]), sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version
+            str(self.all_logs[idx]),
+            sample_fraction=sample_fraction,
+            in_index_dir=in_index_dir,
+            index_version=index_version,
         )
 
     def check_all_cameras(
@@ -948,7 +957,7 @@ class MonkeyWrench:
 
     def diagnose_misc(self, log_id: str, out_index_fpath: Optional[str], check: bool) -> List[Tuple[str, str]]:
         """Diagnoses non-sensor data, like poses, GPS, metadata, etc. Returns a list of errors, empty if all is well."""
-        del out_index_fpath # unused for now
+        del out_index_fpath  # unused for now
         fs = fsspec.filesystem(urlparse(self._root).scheme)
         log_root_uri = os.path.join(self._root, log_id)
         log_reader = LogReader(log_root_uri=log_root_uri)
