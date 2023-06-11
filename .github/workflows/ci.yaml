@@ -44,7 +44,7 @@ jobs:
           python -m pip install --upgrade poetry
           poetry install --with=dev
       - name: Check formatting with black
-        run: poetry run black --check
+        run: poetry run black . --check
       - name: Lint with mypy
         run: poetry run mypy . --ignore-missing-imports
       # TODO(andrei): Enable pylint with ruff once library is more mature.
