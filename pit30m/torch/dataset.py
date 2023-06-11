@@ -2,7 +2,6 @@ import os
 import time
 from functools import cached_property
 from typing import Sequence, Union
-from uuid import UUID
 
 import fire
 import numpy as np

@@ -1,11 +1,6 @@
 import numpy as np
 
-from pit30m.data.partitions import (
-    GeoPartition,
-    PreProcessPartition,
-    QueryBasePartition,
-    SizePartition,
-)
+from pit30m.data.partitions import PreProcessPartition
 
 
 def test_PreProcessPartition():

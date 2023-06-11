@@ -5,6 +5,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import random
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
@@ -285,7 +286,7 @@ class MonkeyWrench:
         print("=" * 80)
 
     def stat_sensors(
-        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 1
+        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 2
     ):
         """Gets statistics over the sensors in the dataset.
 
@@ -524,7 +525,17 @@ class MonkeyWrench:
         for log_id in tqdm(self.all_logs):
             self.backup_specific_files(original_base_uri, log_id, out_root, files)
 
-    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 1):
+    # def index_all_cameras_range(self, idx_start, idx_end, reindex=False, index_version: int = 2):
+    #     for idx in range(idx_start, idx_end):
+    #         self.index_all_cameras_debug(idx, reindex=reindex, index_version=index_version)
+
+    def gen_index_all_cameras(self, start_idx, end_idx, reindex=False, index_version: int = 2):
+        for idx in range(start_idx, end_idx):
+            print(
+                f"poetry run python -m pit30m.monkeywrench index_all_cameras_debug {idx} --reindex={str(reindex)} --index-version {index_version}"
+            )
+
+    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 2):
         log_id = self.all_logs[idx]
         print("=" * 80)
         print(f"Indexing log {log_id} ({idx + 1} / {len(self.all_logs)})")
@@ -536,7 +547,7 @@ class MonkeyWrench:
         log_id: str,
         out_index_dir: Optional[str] = None,
         reindex: bool = False,
-        index_version: int = 1,
+        index_version: int = 2,
     ):
         """Create an index of the images in the given log.
 
@@ -572,7 +583,7 @@ class MonkeyWrench:
         index_version: int,
     ):
         """v2 indexer - parallel reading and no image loading. Please see `index_all_cameras` for info."""
-        assert index_version == 1, "v1 is the only currently supported DTYPE"
+        assert index_version == 2, "v2 is the only currently supported DTYPE"
         map = Map()
 
         if isinstance(cam_name, str):
@@ -621,10 +632,21 @@ class MonkeyWrench:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote index(es) to: {out_index_fpath}")
 
-    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 1):
-        log_id = str(self.all_logs[log_index])
+    def gen_index_lidar(self, start_idx, end_idx, reindex=False, index_version: int = 2, shuffle_seed: int = 42):
+        for idx in range(start_idx, end_idx):
+            print(
+                f"poetry run python -m pit30m.monkeywrench index_lidar_debug {idx} "
+                f"--reindex={str(reindex)} --index-version {index_version} --shuffle-seed {shuffle_seed}"
+            )
+
+    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 2, shuffle_seed: int = 42):
+        all_logs = list(self.all_logs)
+        random.seed(shuffle_seed)
+        random.shuffle(all_logs)
+        log_id = str(all_logs[log_index])
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
+        print(f"Version: {index_version:03d} | Reindex: {reindex}")
         print("=" * 80)
         return self.index_lidar(
             log_id, lidar_name=VELODYNE_NAME, reindex=reindex, index_version=index_version, out_index_dir=None
@@ -638,7 +660,7 @@ class MonkeyWrench:
         reindex: bool,
         index_version: int,
     ):
-        assert index_version == 1, "v1 is the only currently supported DTYPE"
+        assert index_version == 2, "v2 is the only currently supported DTYPE"
         map = Map()
 
         self._logger.info("Setting up log reader to process LiDAR %s", lidar_name)
@@ -679,7 +701,7 @@ class MonkeyWrench:
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
 
     def modernize_lidar(self):
-        # XXX(andrei): Implement simple LIDAR modernizer - it will speed up indexing too!
+        # TODO(andrei): Implement simple LIDAR modernizer - it will speed up future indexing too!
         pass
 
     def check_all_cameras_by_index(
@@ -718,7 +740,7 @@ class MonkeyWrench:
         cam_name: Union[str, CamName],
         sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION,
         in_index_dir: Optional[str] = None,
-        index_version: int = 0,
+        index_version: int = 2,
         min_num_samples: int = 500,
     ):
         """Samples camera data and checks its integrity. Camera needs to have been indexed first."""
