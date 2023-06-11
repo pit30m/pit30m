@@ -13,7 +13,6 @@ from joblib import Memory, Parallel, delayed
 
 from pit30m.data.log_reader import LogReader
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
-from pit30m.time_utils import gps_seconds_to_utc
 from pit30m.util import print_list_with_limit
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.

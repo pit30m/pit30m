@@ -1,11 +1,10 @@
 import numpy as np
-import pytest
 from pytest import fixture
 
 from pit30m.camera import CamName
 from pit30m.data.log_reader import LogReader
 from pit30m.data.partitions import GeoPartition, PreProcessPartition, QueryBasePartition
-from pit30m.data.submap import DEFAULT_SUBMAP_INFO_PREFIX, Map
+from pit30m.data.submap import Map
 
 
 @fixture(name="real_map", scope="session")

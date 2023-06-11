@@ -1,10 +1,7 @@
 import numpy as np
 
 from pit30m.data.partitions import (
-    GeoPartition,
     PreProcessPartition,
-    QueryBasePartition,
-    SizePartition,
 )
 
 
