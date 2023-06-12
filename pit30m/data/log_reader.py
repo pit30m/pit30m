@@ -2,13 +2,14 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Iterable, Iterator, List, Optional, Tuple, Type
+from typing import Any, Iterable, Iterator, List, Optional, Tuple, Type
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
 import lz4
 import numpy as np
+import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
@@ -121,7 +122,7 @@ class LogReader:
         log_root_uri: str,
         pose_fname: str = "all_poses.npz",
         wgs84_pose_fname: str = "wgs84.npz",
-        map: Map = None,
+        map: Optional[Map] = None,
         index_version: int = LATEST_INDEX_VERSION,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
@@ -192,12 +193,12 @@ class LogReader:
             return self.geo_partition
         elif type(partition) == QueryBasePartition:
             return self.query_base_partition
-        elif type(partition) == SizePartition:
-            return self.size_partition
+        # elif type(partition) == SizePartition:
+        #     return self.size_partition
         else:
             raise ValueError(f"Unknown partition type: {partition}")
 
-    def partition_assigments(self, partitions: Optional[Iterable[Partition]] = None) -> Tuple[np.ndarray]:
+    def partition_assigments(self, partitions: Optional[Iterable[Partition]] = None) -> List[np.ndarray]:
         """Fetches partition indices from S3 and converts them to boolean arrays according to the requested partition
         values. Note that these partitions are wrt the raw pose data @ 100Hz, not the sensor data; therefore, we must
         index sensor data into those timestamps to find out which partitions they belong to.
@@ -209,16 +210,15 @@ class LogReader:
             A list of boolean arrays. Each array has n_dense_poses entries, and each entry represents membership of the
             pose to a requested partition.
         """
-        partition_indices = tuple()
+        partition_indices = list()
         if partitions is not None:
             for partition in partitions:
                 idx = self.partition_to_index(partition)
-                # partition_indices.append(partition.value_to_index(partition, idx))
-                partition_indices += (partition.value_to_index(partition, idx),)
+                partition_indices.append(partition.value_to_index(partition, idx))
 
         return partition_indices
 
-    def partitions_mask(self, partitions: Tuple[Partition]) -> np.ndarray:
+    def partitions_mask(self, partitions: Optional[Iterable[Partition]] = None) -> np.ndarray:
         """
         Returns a boolean np array that accounts for the requested partitions by setting timestamps that should be
         skipped to False. Computed for the raw pose data @ 100 Hz.
@@ -238,7 +238,7 @@ class LogReader:
         """
         n_sensor_measurements = len(self.raw_pose_data)
         partition_indices = self.partition_assigments(partitions)
-        partition_indices += (np.full(n_sensor_measurements, True),)
+        partition_indices.append(np.full(n_sensor_measurements, True))
 
         combined_indices_mask = np.logical_and.reduce(partition_indices)
         timestamps = self.raw_pose_data["capture_time"]
@@ -422,11 +422,6 @@ class LogReader:
                 )
             )
         pose_index = np.array(sorted(pose_data, key=lambda x: x[0]))
-
-        # # Filter by partitions
-        # partitions_mask = self.filter_partitions(pose_index[:, 0], max_delta_s=0.2)
-        # pose_index = pose_index[partitions_mask]
-
         return pose_index
 
     @cached_property
@@ -480,9 +475,6 @@ class LogReader:
             ),
         )
 
-        partitions_mask = self.filter_partitions(pose_index["time"], max_delta_s=0.2)
-        pose_index = pose_index[partitions_mask]
-
         return pose_index
 
     @cached_property
@@ -505,11 +497,6 @@ class LogReader:
             xyzs = self._map.to_utm(xyzs, submaps, strict=False)
         except SubmapPoseNotFoundException as e:
             raise RuntimeError(f"The pose of one of the submaps from log {self.log_id} was not found.") from e
-
-        # Filter by partitions
-        partitions_mask = self.filter_partitions(mrp["time"], max_delta_s=0.2)
-        mrp = mrp[partitions_mask]
-        xyzs = xyzs[partitions_mask]
 
         return mrp["valid"], xyzs
 
