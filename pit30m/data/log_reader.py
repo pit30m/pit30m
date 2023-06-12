@@ -9,7 +9,6 @@ from uuid import UUID
 import fsspec
 import lz4
 import numpy as np
-import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
@@ -32,9 +31,11 @@ memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 
 @dataclass
 class CameraImage:
+    """Represents an RGB camera image. Timestamps returned by Pit30M log readers are in GPS time."""
+
     # TODO consider replacing the cam with a Camera object which can be used to get the intrinsics and stuff
     image: np.ndarray
-    cam_name: str
+    cam_name: CamName
     capture_timestamp: float
     shutter_time_s: float
     gain_db: float
@@ -46,10 +47,9 @@ class LiDARFrame:
     xyz_sensor: np.ndarray
     intensity: np.ndarray
     point_times: np.ndarray
-    laser_theta: np.ndarray = None
-    raw_power: np.ndarray = None
-    laser_id: np.ndarray = None
-    # ['laser_theta', 'seconds', 'raw_power', 'intensity', 'points', 'points_H_sensor', 'laser_id']
+    laser_theta: Optional[np.ndarray] = None
+    raw_power: Optional[np.ndarray] = None
+    laser_id: Optional[np.ndarray] = None
 
 
 VELODYNE_NAME = "hdl64e_12_middle_front_roof"
@@ -388,11 +388,10 @@ class LogReader:
             return data
 
     @cached_property
-    def raw_pose_data(self) -> npt.NDArray[RAW_POSE_DTYPE]:
+    def raw_pose_data(self) -> np.ndarray:
         """Returns the internal raw pose array, which needs manual association with other data types. 100Hz.
 
-        In practice, users should use the camera/LiDAR iterators instead. The raw arrays are full of possibly confusing
-        or unexpected aspects, e.g., GPS instead of UNIX time.
+        In practice, users should almost always use the indexes and the camera/LiDAR iterators to avoid surprises.
         """
         pose_fpath = os.path.join(self._log_root_uri, self._pose_fname)
         with self.fs.open(pose_fpath, "rb") as raw_pose_f:
@@ -405,14 +404,14 @@ class LogReader:
         Not useful for global localization, since each log will have its own coordinate system, but useful for SLAM-like
         evaluation, since you will have a continuous pose trajectory.
 
-        Pose times are UNIX seconds.
+        Pose times are GPS seconds.
         """
         pose_data = []
+        # TODO(andrei): Can we just assemble this with numpy structured arrays?
         for pose in self.raw_pose_data:
             pose_data.append(
                 (
-                    # TODO(julieta) The overhead of this conversion might be very large at scale. Consider vectorizing
-                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
+                    pose["capture_time"],
                     pose["poses_and_differentials_valid"],
                     pose["continuous"]["x"],
                     pose["continuous"]["y"],
@@ -432,7 +431,7 @@ class LogReader:
 
     @cached_property
     def map_relative_poses_dense(self) -> np.ndarray:
-        """T x 9 array with unix time, validity, submap ID, and the 6-DoF pose within that submap.
+        """T x 9 array with GPS time, validity, submap ID, and the 6-DoF pose within that submap.
 
         WARNING:
             - As of 2023-02, the submaps are not 100% globally consistent. Topometric pose accuracy is cm-level, but
@@ -453,8 +452,7 @@ class LogReader:
             # TODO(andrei): Custom, interpretable dtype!
             pose_data.append(
                 (
-                    # TODO(julieta) consider vectorizing
-                    gps_seconds_to_utc(pose["capture_time"]).timestamp(),
+                    pose["capture_time"],
                     pose["poses_and_differentials_valid"],
                     pose["map_relative"]["submap"],
                     pose["map_relative"]["x"],
@@ -489,11 +487,12 @@ class LogReader:
 
     @cached_property
     def utm_poses_dense(self) -> Tuple[np.ndarray, np.ndarray]:
-        """UTM poses for the log, ordered by time.
+        """UTM poses for the log, ordered by time. Missing poses (e.g., not in the current split) are NaN.
 
         Returns:
             A tuple with two elements:
-                - An n-long boolean array indicating whether the poses are valid
+                - An n-long boolean array indicating whether the poses are valid. A pose can be non-NaN but still be,
+                    invalid i.e., the pose is available but unreliable.
                 - An n-by-3 array with the UTM xy coordinates and altitudes of the poses
         """
         mrp = self.map_relative_poses_dense
@@ -539,7 +538,7 @@ class LogReader:
 
     @cached_property
     def raw_wgs84_poses_dense(self) -> np.ndarray:
-        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by their UNIX timestamp.
+        """Returns an N x 7 array of online (non-optimized) WGS84 poses, ordered by their GPS timestamp.
 
         TODO(andrei): Degrees or radians?
 
@@ -550,7 +549,7 @@ class LogReader:
         for wgs84 in raw:
             wgs84_data.append(
                 (
-                    gps_seconds_to_utc(wgs84["timestamp"]).timestamp(),
+                    wgs84["timestamp"],
                     wgs84["longitude"],
                     wgs84["latitude"],
                     wgs84["altitude"],
@@ -559,7 +558,18 @@ class LogReader:
                     wgs84["heading"],
                 )
             )
-        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]))
+        wgs84_dtype = np.dtype(
+            [
+                ("timestamp", np.float64),
+                ("longitude", np.float64),
+                ("latitude", np.float64),
+                ("altitude", np.float64),
+                ("roll", np.float64),
+                ("pitch", np.float64),
+                ("heading", np.float64),
+            ]
+        )
+        wgs84_data_np = np.array(sorted(wgs84_data, key=lambda x: x[0]), dtype=np.dtype(wgs84_dtype))
         return wgs84_data_np
 
     def get_image(self, cam_name: CamName, idx: int) -> CameraImage:
@@ -579,7 +589,7 @@ class LogReader:
             return CameraImage(
                 image=image_np,
                 cam_name=cam_name,
-                capture_timestamp=gps_to_unix_timestamp(index_entry["img_time"]),
+                capture_timestamp=index_entry["img_time"],
                 gain_db=index_entry["gain_db"],
                 shutter_time_s=index_entry["shutter_s"],
             )

@@ -1,6 +1,6 @@
 # Pit30M Development Kit
 
-[![Python CI Status](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
+[![Python CI Status](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/pit30m)](https://pypi.org/project/pit30m/)
 [![Public on the AWS Open Data Registry](https://shields.io/badge/Open%20Data%20Registry-public-green?logo=amazonaws&style=flat)](#)
@@ -64,7 +64,10 @@ Package development, testing, and releasing is performed with `poetry`. If you j
     - Advanced command: `poetry run pytest -ff --new-first --quiet --color=yes --maxfail=3 -n 4`
     - This command will run tests, then wait for new changes and test them automatically. Test execution will run in parallel thanks to the `-n 4` argument.
     - The command lets you get feedback on whether your code change fixed or broke a particular test within seconds.
- 5. Remember to run `poetry install` after pulling and/or updating dependencies.
+ 5. Make sure you lint. Refer to `ci.yaml` for exact commands we run in CI.
+   - format with black: `poetry run black .`
+   - type check with mypy: `poetry run mypy . --ignore-missing-imports`
+ 6. Remember to run `poetry install` after pulling and/or updating dependencies.
 
 
 Note that in the pre-release time, `torch` will be a "dev" dependency, since it's necessary for all tests to pass.

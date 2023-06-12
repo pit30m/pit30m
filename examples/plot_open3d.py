@@ -1,11 +1,15 @@
-"""Example plotting using Open3d."""
+"""(Deprecated, WIP) Example plotting using Open3d."""
+# mypy: ignore-errors
 
 import multiprocessing as mp
 import os
 import sys
 from urllib.parse import urlparse
 
+import fire
 import fsspec
+import numpy as np
+from tqdm import tqdm
 
 # Pretend we installed the pit30m package
 pth = os.path.realpath(os.path.dirname(__file__) + "/../")
@@ -19,9 +23,12 @@ except ImportError:
     print(f"Current Python: {sys.executable}")
     exit(0)
 
-import fire
 
 from pit30m.data.log_reader import LogReader
+
+
+def unzip(l):
+    return list(zip(*l))
 
 
 def np_to_o3d_pcd(xyz):
@@ -42,7 +49,7 @@ def open3d_many_sweeps_example(self, log_root_uri: str) -> None:
     # ld = dataset_base + log_uri + "/lidars/"
     # dbp = urlparse(dataset_base)
 
-    lr = LogReader(log_root_uri)
+    _ = LogReader(log_root_uri)  # TODO: update this
     fs = fsspec.filesystem(urlparse(log_root_uri).scheme, anon=True)
 
     with mp.Pool(processes=mp.cpu_count() - 1) as pool:

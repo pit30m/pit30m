@@ -4,12 +4,13 @@ from abc import abstractmethod
 from enum import Enum
 
 import numpy as np
+import numpy.typing as npt
 
 
 class Partition(Enum):
     @staticmethod
     @abstractmethod
-    def value_to_index(val: Partition, index: np.ndarray) -> int:
+    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]:
         ...
 
     @classmethod
@@ -24,7 +25,7 @@ class PreProcessPartition(Partition):
     INVALID = False
 
     @staticmethod
-    def value_to_index(val: PreProcessPartition, index: np.ndarray) -> int:
+    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]:
         assert isinstance(val, PreProcessPartition), f"val must be a PreProcessPartition, not {type(val)=}"
         return index == val.value
 
@@ -38,10 +39,10 @@ class GeoPartition(Partition):
     TRAIN = 0
     VAL = 1
     TEST = 2
-    # Some values migth be NaN, meaning they are outside the three geopartitions
+    # Some values might be NaN, meaning they are outside the three geopartitions
 
     @staticmethod
-    def value_to_index(val: GeoPartition, index: np.ndarray) -> int:
+    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]:
         assert isinstance(val, GeoPartition), f"val must be a GeoPartition, not {type(val)=}"
         return index == val.value
 
@@ -56,7 +57,7 @@ class QueryBasePartition(Partition):
     BASE = 1
 
     @staticmethod
-    def value_to_index(val: QueryBasePartition, index: np.ndarray) -> int:
+    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]:
         assert isinstance(val, QueryBasePartition), f"val must be a QueryBasePartition, not {type(val)=}"
         return index == val.value
 
@@ -72,10 +73,10 @@ class SizePartition(Partition):
     FULL = 2
 
     @staticmethod
-    def value_to_index(val: SizePartition, index: np.ndarray) -> int:
+    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]:
         assert isinstance(val, SizePartition), f"val must be a SizePartition, not {type(val)=}"
         if val == SizePartition.FULL:
-            return np.full(len(index), True)
+            return np.full(len(index), True, dtype=bool)
         if val == SizePartition.MID:
             return np.logical_or(index == SizePartition.MID.value, index == SizePartition.FULL.value)
         if val == SizePartition.TINY:

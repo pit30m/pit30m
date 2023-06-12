@@ -5,6 +5,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import random
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
@@ -64,16 +65,16 @@ cache = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
 @dataclass
 class CamReportSummary:
     n_ok: int
-    warnings: List[str] = None
-    errors: List[str] = None
+    warnings: Optional[List[str]] = None
+    errors: Optional[List[str]] = None
 
     @property
     def n_warns(self) -> int:
-        return len(self.warnings)
+        return len(self.warnings) if self.warnings else 0
 
     @property
     def n_errs(self) -> int:
-        return len(self.errors)
+        return len(self.errors) if self.errors else 0
 
 
 class LogStatus(Enum):
@@ -215,7 +216,7 @@ class MonkeyWrench:
         with open(self._log_list_fpath, "r") as f:
             return [UUID(line.strip()) for line in f]
 
-    def index(self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True):
+    def index(self, log_id: str, out_index_dir: Optional[str] = None, check: bool = True, index_version: int = 2):
         """Create index files for the raw data in the dataset.
 
         At dump time, the dataset just contained numbered image files with small associated metadata files. This meant
@@ -233,9 +234,15 @@ class MonkeyWrench:
                                 check its shape, load the metadata and ensure it's not corrupted, load the LiDAR and
                                 check its shape too, etc.
         """
-        self.index_all_cameras(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        self.index_lidar(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
-        res = self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_fpath, check=check)
+        self.index_all_cameras(log_id=log_id, out_index_dir=out_index_dir, index_version=index_version)
+        self.index_lidar(
+            log_id=log_id,
+            lidar_name=VELODYNE_NAME,
+            out_index_dir=out_index_dir,
+            reindex=False,
+            index_version=index_version,
+        )
+        self.diagnose_misc(log_id=log_id, out_index_fpath=out_index_dir, check=check)
         # # TODO(andrei): Turn the misc diagnosis into a mini report too.
         # if len(res) > 0:
         #     print("WARNING: misc non-sensor data had errors. See above for more information.")
@@ -279,7 +286,7 @@ class MonkeyWrench:
         print("=" * 80)
 
     def stat_sensors(
-        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 1
+        self, start: int = 0, max: int = 100, min_img: int = 10, out_root: str = "/tmp", index_version: int = 2
     ):
         """Gets statistics over the sensors in the dataset.
 
@@ -518,22 +525,17 @@ class MonkeyWrench:
         for log_id in tqdm(self.all_logs):
             self.backup_specific_files(original_base_uri, log_id, out_root, files)
 
-    # def index_all_cameras(
-    #     self, log_id: str, out_index_fpath: Optional[str] = None, check: bool = True, parallel: bool = True
-    # ):
-    #     if parallel:
-    #         n_jobs = len(CamName)
-    #         print(f"Using exactly {n_jobs} jobs")
-    #         with mp.Pool(processes=n_jobs) as pool:
-    #             pool.starmap(
-    #                 self.index_camera,
-    #                 [(log_id, cam_name, out_index_fpath, check, index) for index, cam_name in enumerate(CamName)],
-    #             )
-    #     else:
-    #         for cam in CamName:
-    #             self.index_camera(log_id=log_id, cam_name=cam, out_index_fpath=out_index_fpath, check=check)
+    # def index_all_cameras_range(self, idx_start, idx_end, reindex=False, index_version: int = 2):
+    #     for idx in range(idx_start, idx_end):
+    #         self.index_all_cameras_debug(idx, reindex=reindex, index_version=index_version)
 
-    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 1):
+    def gen_index_all_cameras(self, start_idx, end_idx, reindex=False, index_version: int = 2):
+        for idx in range(start_idx, end_idx):
+            print(
+                f"poetry run python -m pit30m.monkeywrench index_all_cameras_debug {idx} --reindex={str(reindex)} --index-version {index_version}"
+            )
+
+    def index_all_cameras_debug(self, idx, reindex=False, index_version: int = 2):
         log_id = self.all_logs[idx]
         print("=" * 80)
         print(f"Indexing log {log_id} ({idx + 1} / {len(self.all_logs)})")
@@ -545,7 +547,7 @@ class MonkeyWrench:
         log_id: str,
         out_index_dir: Optional[str] = None,
         reindex: bool = False,
-        index_version: int = 1,
+        index_version: int = 2,
     ):
         """Create an index of the images in the given log.
 
@@ -581,7 +583,7 @@ class MonkeyWrench:
         index_version: int,
     ):
         """v2 indexer - parallel reading and no image loading. Please see `index_all_cameras` for info."""
-        assert index_version == 1, "v1 is the only currently supported DTYPE"
+        assert index_version == 2, "v2 is the only currently supported DTYPE"
         map = Map()
 
         if isinstance(cam_name, str):
@@ -595,7 +597,7 @@ class MonkeyWrench:
         if out_index_dir is None:
             out_index_dir = os.path.join(cam_dir, "index")
 
-        in_scheme = urlparse(self._root).scheme
+        urlparse(self._root).scheme
         out_scheme = urlparse(out_index_dir).scheme
         # in_fs = fsspec.filesystem(in_scheme)
         out_fs = fsspec.filesystem(out_scheme)
@@ -630,10 +632,21 @@ class MonkeyWrench:
             np.savez_compressed(out_f, index=index)
         print(f"Wrote index(es) to: {out_index_fpath}")
 
-    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 1):
-        log_id = str(self.all_logs[log_index])
+    def gen_index_lidar(self, start_idx, end_idx, reindex=False, index_version: int = 2, shuffle_seed: int = 42):
+        for idx in range(start_idx, end_idx):
+            print(
+                f"poetry run python -m pit30m.monkeywrench index_lidar_debug {idx} "
+                f"--reindex={str(reindex)} --index-version {index_version} --shuffle-seed {shuffle_seed}"
+            )
+
+    def index_lidar_debug(self, log_index, reindex=False, index_version: int = 2, shuffle_seed: int = 42):
+        all_logs = list(self.all_logs)
+        random.seed(shuffle_seed)
+        random.shuffle(all_logs)
+        log_id = str(all_logs[log_index])
         print("=" * 80)
         print(f"Indexing log LiDAR {log_id} ({log_index + 1} / {len(self.all_logs)})")
+        print(f"Version: {index_version:03d} | Reindex: {reindex}")
         print("=" * 80)
         return self.index_lidar(
             log_id, lidar_name=VELODYNE_NAME, reindex=reindex, index_version=index_version, out_index_dir=None
@@ -647,7 +660,7 @@ class MonkeyWrench:
         reindex: bool,
         index_version: int,
     ):
-        assert index_version == 1, "v1 is the only currently supported DTYPE"
+        assert index_version == 2, "v2 is the only currently supported DTYPE"
         map = Map()
 
         self._logger.info("Setting up log reader to process LiDAR %s", lidar_name)
@@ -688,7 +701,7 @@ class MonkeyWrench:
         print(f"Wrote LiDAR index(es) to: {out_index_fpath}")
 
     def modernize_lidar(self):
-        # XXX(andrei): Implement simple LIDAR modernizer - it will speed up indexing too!
+        # TODO(andrei): Implement simple LIDAR modernizer - it will speed up future indexing too!
         pass
 
     def check_all_cameras_by_index(
@@ -699,7 +712,10 @@ class MonkeyWrench:
         index_version: int = 0,
     ):
         return self.check_all_cameras(
-            self.all_logs[idx], sample_fraction=sample_fraction, in_index_dir=in_index_dir, index_version=index_version
+            str(self.all_logs[idx]),
+            sample_fraction=sample_fraction,
+            in_index_dir=in_index_dir,
+            index_version=index_version,
         )
 
     def check_all_cameras(
@@ -724,7 +740,7 @@ class MonkeyWrench:
         cam_name: Union[str, CamName],
         sample_fraction: float = DEFAULT_CAM_CHECK_FRACTION,
         in_index_dir: Optional[str] = None,
-        index_version: int = 0,
+        index_version: int = 2,
         min_num_samples: int = 500,
     ):
         """Samples camera data and checks its integrity. Camera needs to have been indexed first."""
@@ -772,7 +788,7 @@ class MonkeyWrench:
 
         if len(idx) < min_num_samples:
             self._logger.info("Will just check all images")
-            all_idx = range(len(idx))
+            all_idx = list(range(len(idx)))
         else:
             start_end = 60 * 10
             i_st = range(0, start_end)
@@ -833,7 +849,7 @@ class MonkeyWrench:
 
         return problems, meta
 
-    def validate_reports(self, logs: Optional[str] = None, check_receipt: bool = True, write_receipt: bool = True):
+    def validate_reports(self, logs: str, check_receipt: bool = True, write_receipt: bool = True):
         """
         Note that this will typically be the command you run locally, as reading a few CSVs for each log is more than
         doable locally.
@@ -961,8 +977,9 @@ class MonkeyWrench:
         else:
             return (False, lidar_status + camera_summary + other_summary)
 
-    def diagnose_misc(self, log_id: str, out_index_fpath: str, check: bool) -> List[Tuple[str, str]]:
+    def diagnose_misc(self, log_id: str, out_index_fpath: Optional[str], check: bool) -> List[Tuple[str, str]]:
         """Diagnoses non-sensor data, like poses, GPS, metadata, etc. Returns a list of errors, empty if all is well."""
+        del out_index_fpath  # unused for now
         fs = fsspec.filesystem(urlparse(self._root).scheme)
         log_root_uri = os.path.join(self._root, log_id)
         log_reader = LogReader(log_root_uri=log_root_uri)
@@ -987,7 +1004,7 @@ class MonkeyWrench:
         try:
             mrp = log_reader.map_relative_poses_dense
             assert mrp["time"].min() > 0
-        except (RuntimeError, ValueError) as err:
+        except (RuntimeError, ValueError):
             errors.append(("map_relative_poses_dense", "invalid"))
 
         try:
@@ -1129,8 +1146,8 @@ class MonkeyWrench:
         # missing is an error.
         if check and len(errors) > 0:
             print(f"{len(errors)} errors found in {log_id}!")
-            for err in errors:
-                print("\t- " + str(err))
+            for error in errors:
+                print("\t- " + str(error))
 
         return errors
 
@@ -1157,7 +1174,7 @@ class MonkeyWrench:
             return (False, "no_report")
 
         ok = 0
-        errors = []
+        errors: list[tuple[str, float, str, str]] = []
         warnings = []
         unmatched_frames = []
 
@@ -1165,7 +1182,7 @@ class MonkeyWrench:
             reader = csv.reader(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
             header = next(reader)
             if len(header) != 4:
-                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+                errors.append(("", -1.0, INVALID_REPORT, "Invalid header: " + str(header)))
             else:
                 for sample_uri, timestamp, status, detail in reader:
                     if status == "OK":
@@ -1177,14 +1194,14 @@ class MonkeyWrench:
                         warnings.append("unmatched frame at " + str(timestamp) + "s, delta_s=" + str(delta_s))
                     else:
                         # print(f"Problem with {sample_uri}: {status}")
-                        errors.append((sample_uri, timestamp, status, detail))
+                        errors.append((sample_uri, float(timestamp), status, detail))
 
         if len(unmatched_frames):
-            max_delta = -1
+            max_delta = -1.0
             clusters = []
-            cur_start = -1
+            cur_start = -1.0
             cur_start_idx = -1
-            prev_ts = -1
+            prev_ts = -1.0
             for idx, (ts, delta_s, sample_uri) in enumerate(unmatched_frames):
                 # print(f"{ts:.3f}", sample_uri.split("/")[-1], delta_s)
 
@@ -1268,8 +1285,8 @@ class MonkeyWrench:
         canary_loc = os.path.join(out_index_fpath, VALIDATION_CANARY_FNAME)
 
         ok = 0
-        errors = []
-        warnings = []
+        errors: list[tuple[str, float, str, str]] = []
+        warnings: list[tuple[str, float, str, str]] = []
 
         fs = fsspec.filesystem(urlparse(self._root).scheme)
         if check_receipt and fs.isfile(canary_loc):
@@ -1283,7 +1300,7 @@ class MonkeyWrench:
             reader = csv.reader(csvfile, quotechar="|", quoting=csv.QUOTE_MINIMAL)
             header = next(reader)
             if len(header) != 4:
-                errors.append(("", -1, INVALID_REPORT, "Invalid header: " + str(header)))
+                errors.append(("", -1.0, INVALID_REPORT, "Invalid header: " + str(header)))
             else:
                 for sample_uri, timestamp, status, detail in reader:
                     if status == "OK":
@@ -1293,10 +1310,10 @@ class MonkeyWrench:
                         offset_s = float(detail.rstrip("s"))
                         if offset_s > acceptable_wgs84_delay_s:
                             # Be a little lenient
-                            warnings.append((sample_uri, timestamp, status, detail))
+                            warnings.append((sample_uri, float(timestamp), status, detail))
                     else:
                         # print(f"Problem with {sample_uri}: {status}")
-                        errors.append((sample_uri, timestamp, status, detail))
+                        errors.append((sample_uri, float(timestamp), status, detail))
 
         if len(errors) > 0:
             print(f"Found {len(errors)} errors in {log_id}.")
@@ -1346,7 +1363,7 @@ class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
         return None
 
 
-SafeLoaderIgnoreUnknown.add_constructor(None, SafeLoaderIgnoreUnknown.ignore_unknown)
+SafeLoaderIgnoreUnknown.add_constructor("!binary", SafeLoaderIgnoreUnknown.ignore_unknown)
 
 
 if __name__ == "__main__":

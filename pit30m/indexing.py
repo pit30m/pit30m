@@ -13,7 +13,6 @@ import numpy as np
 from joblib import Memory, Parallel, delayed
 
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
-from pit30m.time_utils import gps_seconds_to_utc
 from pit30m.util import print_list_with_limit
 
 if TYPE_CHECKING:
@@ -72,7 +71,7 @@ CAM_INDEX_V1_0_DTYPE = np.dtype(
     [
         # TODO-LOW(andrei): Index a number and day/night to save space.
         ("rel_path", str, MAX_IMG_RELPATH_LEN),
-        # Unix timestamp
+        # GPS timestamp
         ("img_time", np.double),
         ("shutter_s", np.double),
         ("seq_counter", np.int64),
@@ -106,6 +105,7 @@ CAM_INDEX_V1_0_DTYPE = np.dtype(
         ("utm_z", np.double),  # Altitude
     ]
 )
+CAM_INDEX_V2_0_DTYPE = CAM_INDEX_V1_0_DTYPE
 
 
 LIDAR_INDEX_V0_0_DTYPE = np.dtype(
@@ -184,6 +184,7 @@ LIDAR_INDEX_V1_0_DTYPE = np.dtype(
         ("utm_z", np.double),  # Altitude
     ]
 )
+LIDAR_INDEX_V2_0_DTYPE = LIDAR_INDEX_V1_0_DTYPE
 
 
 def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
@@ -206,10 +207,10 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
         assert timestamp_gps_s < START_OF_2011_UNIX
         # Not used
         # transmission_s = float(meta["transmission_seconds"])
-        timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
+        # timestamp_unix_s = gps_seconds_to_utc(timestamp_gps_s).timestamp()
 
         entry = (
-            timestamp_unix_s,
+            timestamp_gps_s,
             float(meta["shutter_seconds"]),
             int(meta["sequence_counter"]),
             float(meta["gain_db"]),
@@ -218,11 +219,12 @@ def fetch_metadata_for_image(img_uri: str) -> tuple[str, tuple]:
 
 
 @memory.cache(verbose=0)
-def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
+def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, ...]:
     """Returns LiDAR timing metadata.
 
-    All returned timestamps are UNIX timestamps.
+    All returned timestamps are GPS timestamps.
     """
+    # meta_uri = lidar_uri.replace(".day", ".night").replace(".night.webp", ".meta.npy").replace(".webp", ".meta.npy")
     with fsspec.open(lidar_uri) as compressed_f:
         with lz4.frame.open(compressed_f, "rb") as f:
             lidar_data = np.load(f)
@@ -269,21 +271,21 @@ def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, tuple]:
                 )
 
             # Assumption - no leap second during the sweep.
-            first_point_gps = point_times_gps[0]
-            first_point_unix = gps_seconds_to_utc(first_point_gps).timestamp()
-            assert first_point_unix > first_point_gps
-            naive_delta = first_point_unix - point_times_gps[0]
-            assert naive_delta > 0
+            # first_point_gps = point_times_gps[0]
+            # first_point_unix = gps_seconds_to_utc(first_point_gps).timestamp()
+            # assert first_point_unix > first_point_gps
+            # naive_delta = first_point_unix - point_times_gps[0]
+            # assert naive_delta > 0
 
-            point_times_unix = point_times_gps + naive_delta
+            # point_times_unix = point_times_gps + naive_delta
 
             return (
                 "OK",
                 lidar_uri,
-                point_times_unix.min(),
-                point_times_unix.max(),
-                point_times_unix.mean(),
-                np.median(point_times_unix),
+                point_times_gps.min(),
+                point_times_gps.max(),
+                point_times_gps.mean(),
+                np.median(point_times_gps),
                 lidar_data["points"].shape,
             )
 
@@ -422,6 +424,8 @@ def build_camera_index(
         camera_index_dtype = CAM_INDEX_V0_0_DTYPE
     elif index_version == 1:
         camera_index_dtype = CAM_INDEX_V1_0_DTYPE
+    elif index_version == 2:
+        camera_index_dtype = CAM_INDEX_V2_0_DTYPE
     else:
         raise ValueError(f"Unknown index version {index_version}")
 
@@ -453,7 +457,9 @@ def build_camera_index(
     # 512, 15s = 14.9k
     #
     # This subsequently got a fair bit slower once I actually parsed the npy, oh well
-    pool = Parallel(n_jobs=mp.cpu_count() * 8, verbose=1, batch_size=8)
+    # Lower factor when running inside AWS (4) vs locally (8).
+    factor = 4
+    pool = Parallel(n_jobs=mp.cpu_count() * factor, verbose=1, batch_size=8)
     logger.info("Fetching metadata...")
     res = pool(delayed(fetch_metadata_for_image)(x) for x in image_uris)
     logger.info("Fetched %d results", len(res))
@@ -481,8 +487,6 @@ def build_camera_index(
     matched_timestamps_cp = cp_times[cp_index]
     deltas_cp = np.abs(matched_timestamps_cp - image_times)
 
-    unindexed_frames = []
-    status = []
     raw_index = []
     for row_idx, ((img_fpath, img_data), pose_idx, cp_idx, delta_mrp_s, delta_cp_s) in enumerate(
         zip(res, utm_and_mrp_index, cp_index, deltas_mrp, deltas_cp)
@@ -589,6 +593,8 @@ def build_lidar_index(
         lidar_dtype = LIDAR_INDEX_V0_0_DTYPE
     elif index_version == 1:
         lidar_dtype = LIDAR_INDEX_V1_0_DTYPE
+    elif index_version == 2:
+        lidar_dtype = LIDAR_INDEX_V2_0_DTYPE
     else:
         raise ValueError(f"Unknown index version {index_version}")
 
@@ -606,7 +612,8 @@ def build_lidar_index(
     h = len(lidar_sweep_uris) / 10.0 / 3600.0
     print(f"{h:.2f} hours of driving")
 
-    pool = Parallel(n_jobs=mp.cpu_count() * 4, verbose=1, batch_size=8)
+    factor = 4
+    pool = Parallel(n_jobs=mp.cpu_count() * factor, verbose=1, batch_size=8)
     _logger.info("Fetching metadata...")
     all_lidar_meta_info = pool(delayed(fetch_metadata_for_lidar)(x) for x in lidar_sweep_uris)
     _logger.info("Fetched %d results", len(all_lidar_meta_info))
@@ -654,15 +661,15 @@ def build_lidar_index(
         #     # print(f"dmin/dmax: {dmin}/{dmax}")
         num_points, pcd_dim = shape
         assert 3 == pcd_dim
-        andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
+        # andrei_timestamp_unix = gps_seconds_to_utc(andrei_timestamp_gps).timestamp()
 
         # The 'dumped at' time should be within the LiDAR sweep time range.
-        assert abs(andrei_timestamp_unix - mean_time) < 1.0, f"{andrei_timestamp_unix = } too far from {min_time = }"
+        assert abs(andrei_timestamp_gps - mean_time) < 1.0, f"{andrei_timestamp_gps = } too far from {mean_time = }"
 
-        lidar_info.append((andrei_timestamp_unix, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
-        lidar_times.append(andrei_timestamp_unix)
+        lidar_info.append((andrei_timestamp_gps, lidar_uri, min_time, max_time, mean_time, p50_time, num_points))
+        lidar_times.append(andrei_timestamp_gps)
 
-    lidar_times = np.array(lidar_times, dtype=np.float64)
+    lidar_times_np = np.array(lidar_times, dtype=np.float64)
 
     #     dmin = andrei_timestamp - min_time
     #     dmax = max_time - andrei_timestamp
@@ -675,25 +682,25 @@ def build_lidar_index(
     _logger.info("Associating...")
     _logger.info(
         "%s %s %s %s",
-        type(lidar_times),
-        str(len(lidar_times)),
-        str(lidar_times[0]) if len(lidar_times) else "n/A",
-        str(type(lidar_times[0])) if len(lidar_times) else "n/A",
+        type(lidar_times_np),
+        str(len(lidar_times_np)),
+        str(lidar_times_np[0]) if len(lidar_times_np) else "n/A",
+        str(type(lidar_times_np[0])) if len(lidar_times_np) else "n/A",
     )
     _logger.info("%s %s %s %s", mrp_times.dtype, str(mrp_times.shape), str(mrp_times[0]), str(type(mrp_times[0])))
     assert np.all(mrp_times[1:] > mrp_times[:-1])
 
-    utm_and_mrp_index = associate(lidar_times, mrp_times, max_delta_s=-1.0)
+    utm_and_mrp_index = associate(lidar_times_np, mrp_times, max_delta_s=-1.0)
     _logger.info("Associating complete.")
 
     matched_timestamps_mrp = mrp_times[utm_and_mrp_index]
-    deltas_mrp = np.abs(matched_timestamps_mrp - lidar_times)
+    deltas_mrp = np.abs(matched_timestamps_mrp - lidar_times_np)
 
     _logger.info("Associating CP...")
-    cp_index = associate(lidar_times, cp_times, max_delta_s=-1.0)
+    cp_index = associate(lidar_times_np, cp_times, max_delta_s=-1.0)
     _logger.info("Associating complete.")
     matched_timestamps_cp = cp_times[cp_index]
-    deltas_cp = np.abs(matched_timestamps_cp - lidar_times)
+    deltas_cp = np.abs(matched_timestamps_cp - lidar_times_np)
 
     # TODO(andrei): Code duplication between this and the camera index builder.
     raw_index = []
