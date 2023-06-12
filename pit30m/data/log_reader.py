@@ -218,7 +218,7 @@ class LogReader:
 
         return partition_indices
 
-    def partitions_mask(self, partitions) -> np.ndarray:
+    def partitions_mask(self, partitions: Tuple[Partition]) -> np.ndarray:
         """
         Returns a boolean np array that accounts for the requested partitions by setting timestamps that should be
         skipped to False. Computed for the raw pose data @ 100 Hz.
@@ -238,7 +238,7 @@ class LogReader:
         """
         n_sensor_measurements = len(self.raw_pose_data)
         partition_indices = self.partition_assigments(partitions)
-        partition_indices.append(np.full(n_sensor_measurements, True))
+        partition_indices += (np.full(n_sensor_measurements, True),)
 
         combined_indices_mask = np.logical_and.reduce(partition_indices)
         timestamps = self.raw_pose_data["capture_time"]
