@@ -52,6 +52,7 @@ UTM_ZONE_NUMBER = 17
 UTM_ZONE_LETTER = "N"
 
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
+LATEST_INDEX_VERSION = 2
 
 # Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
 # continuous or map-relative poses, not the raw poses. '?' represents bool.
@@ -111,7 +112,7 @@ class LogReader:
         pose_fname: str = "all_poses.npz",
         wgs84_pose_fname: str = "wgs84.npz",
         map: Optional[Map] = None,
-        index_version: int = 0,
+        index_version: int = LATEST_INDEX_VERSION,
         partitions: Optional[Set[Partition]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
@@ -127,7 +128,7 @@ class LogReader:
             pose_fname: Name of the pose file. This is usually "all_poses.npz"
             wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz"
             map: Map object. If not provided, will try to load it from the log root
-            index_version: Version of the index to use. Currently only 0 is supported.
+            index_version: Version of the index to use. Currently only 2 is supported.
             partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
                 defaults to None, which means that no sensor measurements are filtered.
         """
@@ -211,7 +212,7 @@ class LogReader:
         Returns:
             A structured numpy array with the lidar observations and their metadata.
         """
-        index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version}.npz")
+        index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
@@ -231,7 +232,7 @@ class LogReader:
         Returns:
             A structured numpy array with the camera observations and their metadata.
         """
-        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version}.npz")
+        index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
             raise ValueError(f"Index file not found: {index_fpath}!")
 
@@ -478,6 +479,9 @@ class LogReader:
             # TODO(julieta) re-dump the indices so that they include the correct path and remove this once we get rid of
             # v0 indexes.
             rel_path += "z.lz4"
+
+        if self._index_version == 2:
+            rel_path += ".lz4"
 
         fpath = os.path.join(self.lidar_root, rel_path)
         with self.fs.open(fpath, "rb") as f_compressed:
