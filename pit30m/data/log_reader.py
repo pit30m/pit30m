@@ -326,7 +326,7 @@ class LogReader:
         index = index[np.argsort(index[sort_by])]
 
         # Filter by partitions
-        partitions_mask = self.filter_partitions(partitions, index["img_time"], max_delta_s)
+        partitions_mask = self.filter_partitions(partitions, index["lidar_time"], max_delta_s)
         index = index[partitions_mask]
 
         return index
