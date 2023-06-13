@@ -86,4 +86,4 @@ class SizePartition(Partition):
 
     @classmethod
     def path_name(self) -> str:
-        return "size"
+        return "size_10"

@@ -138,9 +138,7 @@ class LogReader:
             pose_fname: Name of the pose file. This is usually "all_poses.npz"
             wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz"
             map: Map object. If not provided, will try to load it from the log root
-            index_version: Version of the index to use. Currently only 0 is supported.
-            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
-                defaults to None, which means that no sensor measurements are filtered.
+            index_version: Version of the index to use. Currently only v2 is supported.
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
@@ -180,10 +178,10 @@ class LogReader:
         """Fetches this log's query base partition from s3"""
         return self._load_partition(QueryBasePartition)
 
-    # @cached_property
-    # def size_partition(self) -> np.ndarray:
-    #     """Fetches this log's size partition from s3"""
-    #     return self._load_partition(SizePartition)
+    @cached_property
+    def size_partition(self) -> np.ndarray:
+        """Fetches this log's size partition from s3"""
+        return self._load_partition(SizePartition)
 
     def partition_to_index(self, partition: Partition) -> np.ndarray:
         """Return the partition index for a given partition type"""
@@ -193,8 +191,8 @@ class LogReader:
             return self.geo_partition
         elif type(partition) == QueryBasePartition:
             return self.query_base_partition
-        # elif type(partition) == SizePartition:
-        #     return self.size_partition
+        elif type(partition) == SizePartition:
+            return self.size_partition
         else:
             raise ValueError(f"Unknown partition type: {partition}")
 
@@ -299,7 +297,7 @@ class LogReader:
         self,
         sort_by: str = "lidar_time",
         partitions: Optional[Iterable[Partition]] = None,
-        max_delta=DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S,
+        max_delta_s=DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S,
     ) -> np.ndarray:
         """Returns a lidar index of dtype LIDAR_INDEX_V0_0_DTYPE.
 
@@ -308,6 +306,10 @@ class LogReader:
 
         Args:
             sort_by: name of the field that we want to sort by. Defaults to `lidar_time`
+            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
+                defaults to None, which means that no sensor measurements are filtered.
+            max_delta_s: maximum number of seconds to mismatch between array timestamps and pose timestamps for the
+                match to be considered valid.
         Returns:
             A structured numpy array with the lidar observations and their metadata.
         """
@@ -322,6 +324,11 @@ class LogReader:
             index = np.load(f)["index"]
 
         index = index[np.argsort(index[sort_by])]
+
+        # Filter by partitions
+        partitions_mask = self.filter_partitions(partitions, index["img_time"], max_delta_s)
+        index = index[partitions_mask]
+
         return index
 
     @lru_cache(maxsize=16)
@@ -336,6 +343,10 @@ class LogReader:
         Args:
             cam_name: name of the camera index to load
             sort_by: name of the field that we want to sort by. Defaults to `img_time`
+            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
+                defaults to None, which means that no sensor measurements are filtered.
+            max_delta_s: maximum number of seconds to mismatch between array timestamps and pose timestamps for the
+                match to be considered valid.
         Returns:
             A structured numpy array with the camera observations and their metadata.
         """
