@@ -62,7 +62,7 @@ UTM_ZONE_LETTER = "N"
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
 LATEST_INDEX_VERSION = 2
 
-# Sensor must be at most this fart from the pose to be considered a match
+# Sensor must be at most this far from the pose to be considered a match
 DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S = 0.5
 
 # Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
@@ -313,7 +313,6 @@ class LogReader:
         Returns:
             A structured numpy array with the lidar observations and their metadata.
         """
-
         # TODO(julieta) v0 and v1 have different name formatting on s3
         index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
@@ -350,7 +349,6 @@ class LogReader:
         Returns:
             A structured numpy array with the camera observations and their metadata.
         """
-
         # Get the pre-computed index
         # TODO(julieta) v0 and v1 have different name formatting on s3
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version:02d}.npz")
@@ -607,6 +605,9 @@ class LogReader:
             # TODO(julieta) re-dump the indices so that they include the correct path and remove this once we get rid of
             # v0 indexes.
             rel_path += "z.lz4"
+
+        if self._index_version == 2:
+            rel_path += ".lz4"
 
         fpath = os.path.join(self.lidar_root, rel_path)
         with self.fs.open(fpath, "rb") as f_compressed:
