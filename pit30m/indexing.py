@@ -4,6 +4,7 @@ import logging
 import math
 import multiprocessing as mp
 import os
+from typing import TYPE_CHECKING, Tuple
 from urllib.parse import urlparse
 
 import fsspec
@@ -11,9 +12,12 @@ import lz4
 import numpy as np
 from joblib import Memory, Parallel, delayed
 
-from pit30m.data.log_reader import LogReader
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
 from pit30m.util import print_list_with_limit
+
+if TYPE_CHECKING:
+    # To prevent circular import
+    from pit30m.data.log_reader import LogReader
 
 # 1M images in a log would mean 100k seconds = A 27h nonstop log. We can't overflow this max length.
 MAX_IMG_RELPATH_LEN = 22  # = len("0090/000000.night.webp")
@@ -286,10 +290,68 @@ def fetch_metadata_for_lidar(lidar_uri: str) -> tuple[str, ...]:
             )
 
 
+def associate_np(
+    query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_delta_s: float = 0.5
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Similar associate, but fully vectorized
+
+    Returns:
+        np.ndarray: The same length as query_timestamps, with the index of the associated target_timestamps
+        np.ndarray: The same length as query_timestamps, True if the association is over max_delta_s
+
+    NOTE(julieta)
+    This is called every time we load an index, and therefore it matters that it be fast.
+    We could take advantage of both arrays being sorted and implement this in C or Rust to speed things up.
+    """
+    result = np.zeros(query_timestamps.shape, dtype=np.int64)
+
+    assert target_timestamps.shape[0] > 0
+    assert target_timestamps.dtype == np.float64 or target_timestamps.dtype == np.float32
+    assert query_timestamps.dtype == np.float64 or query_timestamps.dtype == np.float32
+
+    target_idx = np.searchsorted(target_timestamps, query_timestamps)
+    prv = target_idx - 1
+    nxt = target_idx
+
+    # If the target timestamp is past the end of the target timestamps, we'll just use the last
+    idx_past = nxt >= len(target_timestamps)
+    target_idx[idx_past] = len(target_timestamps) - 1
+
+    # Now do interpolation for the rest
+    rest = np.logical_not(idx_past)
+
+    delta_prev = np.abs(query_timestamps - target_timestamps[prv])
+    delta_next = np.abs(query_timestamps - target_timestamps[nxt])
+
+    smaller_idx = delta_prev < delta_next
+    set_with_smaller = np.logical_and(rest, smaller_idx)
+    target_idx[set_with_smaller] = prv[set_with_smaller]
+
+    set_with_larger = np.logical_and(rest, np.logical_not(smaller_idx))
+    target_idx[set_with_larger] = nxt[set_with_larger]
+
+    # NOTE(julieta) we could re-use the appropriate entries from delta_prev and delta_next here, but this is clearer
+    delta_s = np.abs(query_timestamps - target_timestamps[target_idx])
+
+    over = delta_s > max_delta_s
+
+    if max_delta_s > 0:
+        n_over = np.sum(over)
+        # breakpoint()
+        # NOTE(julieta) log instead of print
+        if n_over:
+            print(
+                f"WARNING: There are {n_over} / {len(over)} ({100*n_over/len(over):.2f}%) timestamp associations with gap > {max_delta_s:.3f}s. Max is {delta_s.max():.3f}s"
+            )
+
+    result = target_idx
+    return result, over
+
+
 def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_delta_s: float = 0.5) -> np.ndarray:
     """Associates timestamps from two arrays, returning the indices of the closest matches.
 
-    The result will contain an index into 'db_ts' for each entry in 'q_ts' (query timestamps).
+    The result will contain an index into 'target_timestamps' for each entry in 'query_timestamps'.
     All timestamps are expected to be float64, seconds.
 
     Args:
@@ -297,7 +359,10 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
         target_timestamps:  The timestamps to match against. Must be sorted!!
         max_delta_s:        Warn if the gap between the query and the result is bigger than this. Note that we will
                             still return this index, so the end user is responsible for filtering out the results.
+    Returns:
+        An array of the same size as query_timestamps, with the indices of the matching entries in target_timestamps.
     """
+
     # TODO(andrei): Within a few ms at worst, poses are evenly spaced. We can use
     # arithmetic to dramatically constrain our search range to turn log n binary search
     # into a constant time look-up.
@@ -331,14 +396,14 @@ def associate(query_timestamps: np.ndarray, target_timestamps: np.ndarray, max_d
 
         delta_s = abs(q_ts - target_timestamps[target_idx])
         if max_delta_s > 0 and delta_s > max_delta_s:
-            print(f"WARNING: Timestamp association gap is {delta_s:.3f}s for query {q_idx}.")
+            print(f"WARNING: Timestamp association gap is {delta_s:.3f}s > {max_delta_s:.3f} for query {q_idx}.")
         result[q_idx] = target_idx
 
     return result
 
 
 def build_camera_index(
-    in_root: str, log_reader: LogReader, cam_dir: str, logger: logging.Logger, index_version: int
+    in_root: str, log_reader: "LogReader", cam_dir: str, logger: logging.Logger, index_version: int
 ) -> np.ndarray:
     """Internal function to build an index for a sensor in a log.
 
@@ -515,7 +580,7 @@ def build_camera_index(
 
 
 def build_lidar_index(
-    in_root: str, log_reader: LogReader, lidar_dir: str, _logger: logging.Logger, index_version: int
+    in_root: str, log_reader: "LogReader", lidar_dir: str, _logger: logging.Logger, index_version: int
 ) -> np.ndarray:
     """Internal function to build an index for a LiDAR in a log."""
     _logger.info("Reading continuous pose data")

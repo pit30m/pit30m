@@ -2,21 +2,29 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Iterator, Optional, Set, Tuple
+from typing import Any, Iterable, Iterator, List, Optional, Tuple, Type
 from urllib.parse import urlparse
 from uuid import UUID
 
 import fsspec
 import lz4
 import numpy as np
+import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
 from PIL import Image
 
 from pit30m.camera import CamName
-from pit30m.data.partitions import Partition
+from pit30m.data.partitions import (
+    GeoPartition,
+    Partition,
+    PreProcessPartition,
+    QueryBasePartition,
+    SizePartition,
+)
 from pit30m.data.submap import Map, SubmapPoseNotFoundException
+from pit30m.indexing import associate, associate_np
 from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
@@ -53,6 +61,9 @@ UTM_ZONE_LETTER = "N"
 
 PARTITIONS_BASEPATH = "s3://pit30m/partitions/"
 LATEST_INDEX_VERSION = 2
+
+# Sensor must be at most this far from the pose to be considered a match
+DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S = 0.5
 
 # Original dtype for unified raw pose arrays. Regular users should be using specialized getters, such as those for
 # continuous or map-relative poses, not the raw poses. '?' represents bool.
@@ -113,7 +124,6 @@ class LogReader:
         wgs84_pose_fname: str = "wgs84.npz",
         map: Optional[Map] = None,
         index_version: int = LATEST_INDEX_VERSION,
-        partitions: Optional[Set[Partition]] = None,
     ):
         """Lightweight, low-level S3-aware utility for interacting with a specific log.
 
@@ -128,9 +138,7 @@ class LogReader:
             pose_fname: Name of the pose file. This is usually "all_poses.npz"
             wgs84_pose_fname: Name of the WGS84 pose file (ie, global coords). This is usually "wgs84.npz"
             map: Map object. If not provided, will try to load it from the log root
-            index_version: Version of the index to use. Currently only 2 is supported.
-            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
-                defaults to None, which means that no sensor measurements are filtered.
+            index_version: Version of the index to use. Currently only v2 is supported.
         """
         self._log_root_uri = log_root_uri.rstrip("/")
         self._pose_fname = pose_fname
@@ -138,43 +146,108 @@ class LogReader:
         self._map = Map() if map is None else map
         # TODO(julieta) Semantic version this
         self._index_version = index_version
-        self.partitions = set() if partitions is None else partitions
 
     def __repr__(self) -> str:
         return f"Pit30M Log Reader: {self._log_root_uri}"
 
     @cached_property
-    def partitions_mask(self) -> np.ndarray:
+    def partition_fs(self):
+        """Filesystem object used to read log data."""
+        return fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
+
+    def _load_partition(self, Partition: Type[Partition]) -> np.ndarray:
+        """Feches any of this log's partitions from s3"""
+        partition_fpath = os.path.join(PARTITIONS_BASEPATH, Partition.path_name(), f"{self.log_id}.npz")
+        if not self.partition_fs.exists(partition_fpath):
+            raise FileNotFoundError(f"Partition file not found: {partition_fpath}")
+        with self.partition_fs.open(partition_fpath, "rb") as f:
+            return np.load(f)["partition"]
+
+    @cached_property
+    def preprocess_partition(self) -> np.ndarray:
+        """Fetches this log's preprocess partition from s3"""
+        return self._load_partition(PreProcessPartition)
+
+    @cached_property
+    def geo_partition(self) -> np.ndarray:
+        """Fetches this log's geo partition from s3"""
+        return self._load_partition(GeoPartition)
+
+    @cached_property
+    def query_base_partition(self) -> np.ndarray:
+        """Fetches this log's query base partition from s3"""
+        return self._load_partition(QueryBasePartition)
+
+    @cached_property
+    def size_partition(self) -> np.ndarray:
+        """Fetches this log's size partition from s3"""
+        return self._load_partition(SizePartition)
+
+    def partition_to_index(self, partition: Partition) -> np.ndarray:
+        """Return the partition index for a given partition type"""
+        if type(partition) == PreProcessPartition:
+            return self.preprocess_partition
+        elif type(partition) == GeoPartition:
+            return self.geo_partition
+        elif type(partition) == QueryBasePartition:
+            return self.query_base_partition
+        elif type(partition) == SizePartition:
+            return self.size_partition
+        else:
+            raise ValueError(f"Unknown partition type: {partition}")
+
+    def partition_assigments(self, partitions: Optional[Iterable[Partition]] = None) -> List[np.ndarray]:
+        """Fetches partition indices from S3 and converts them to boolean arrays according to the requested partition
+        values. Note that these partitions are wrt the raw pose data @ 100Hz, not the sensor data (i.e. not wrt any index); therefore, we must
+        index sensor data into those timestamps to find out which partitions they belong to.
+
+        Args:
+            partitions: List of partitions to fetch.
+
+        Returns:
+            A list of boolean arrays. Each array has n_dense_poses entries, and each entry represents membership of the
+            pose to a requested partition.
         """
-        Returns a boolean np array that accounts for the requested partitions, by setting sensor readings that should
-        be skipped to False. Currently computed from the Front Camera.
-        """
-        if not self.partitions:
-            n_sensor_measurements = len(self.get_cam_geo_index(CamName.MIDDLE_FRONT_WIDE))
-            return np.full(n_sensor_measurements, True)
-
-        partition_indices = self.partition_assignments
-        combined_indices = np.logical_and.reduce(partition_indices)
-        return combined_indices
-
-    @property
-    @memory.cache(verbose=0)
-    def partition_assignments(self):
-        """Fetches partition indices from S3 and converts them to boolean arrays according to the reader partition values"""
-        fs = fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
-
-        partition_indices = tuple()
-        for partition in self.partitions:
-            partition_fpath = os.path.join(PARTITIONS_BASEPATH, partition.path_name, f"{self.log_id}.npz")
-            if not fs.exists(partition_fpath):
-                raise ValueError(f"Partition file not found: {partition_fpath}")
-
-            with fs.open(partition_fpath, "rb") as f:
-                idx = np.load(f)["partition"]
-                # Convert the fetched partition index into boolean array that matches the requested value
-                partition_indices += (partition.value_to_index(partition, idx),)
+        partition_indices = list()
+        if partitions is not None:
+            for partition in partitions:
+                idx = self.partition_to_index(partition)
+                partition_indices.append(partition.value_to_index(partition, idx))
 
         return partition_indices
+
+    def partitions_mask(self, partitions: Optional[Iterable[Partition]] = None) -> np.ndarray:
+        """
+        Returns a boolean np array that accounts for the requested partitions by setting timestamps that should be
+        skipped to False. Computed for the raw pose data @ 100 Hz.
+
+        TODO(julieta) This is a rather bandwidth-heavy operation because to load the partiton timestamps we load the
+        dense poses array, which is the heaviest in the log. We should consider moving these timestamps to their own
+        standalone arrays in the bucket.
+
+        Args:
+            partitions: List of partitions to fetch.
+
+        Returns:
+            A structured array with two fields:
+                1. "timestamp": float 64 series of pose GPS timestamps for each one of the dense poses
+                2. "mask": boolean indicating whether each pose is included in the requested partitions
+
+        """
+        n_sensor_measurements = len(self.raw_pose_data)
+        partition_indices = self.partition_assigments(partitions)
+        partition_indices.append(np.full(n_sensor_measurements, True))
+
+        combined_indices_mask = np.logical_and.reduce(partition_indices)
+        timestamps = self.raw_pose_data["capture_time"]
+
+        # Convert everything to a structured array
+        timestamps = rfn.unstructured_to_structured(timestamps[:, np.newaxis], dtype=[("timestamp", "<f8")])
+        combined_indices_mask = rfn.unstructured_to_structured(
+            combined_indices_mask[:, np.newaxis], dtype=[("mask", "?")]
+        )
+        mask_with_timestamps = rfn.merge_arrays((timestamps, combined_indices_mask))
+        return mask_with_timestamps
 
     @property
     def log_id(self) -> UUID:
@@ -200,8 +273,32 @@ class LogReader:
         """Filesystem object used to read log data."""
         return fsspec.filesystem(urlparse(self._log_root_uri).scheme, anon=True)
 
+    def filter_partitions(
+        self,
+        partitions,
+        query_timestamps: np.ndarray,
+        max_delta_s: float = DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S,
+    ) -> np.ndarray:
+        """Returns a boolean mask that indicates which sensor readings belong to the requested partitions."""
+
+        # Get the mask that corresponds to the requested partitions
+        partitions_mask = self.partitions_mask(partitions)
+
+        # Associate with partititions mask
+        matched_indices, over = associate_np(query_timestamps, partitions_mask["timestamp"], max_delta_s=max_delta_s)
+        matched_bool = partitions_mask["mask"][matched_indices]
+        matched_bool[over] = False
+
+        # Filter with the obtained mask
+        return matched_bool
+
     @lru_cache(maxsize=16)
-    def get_lidar_geo_index(self, sort_by: str = "lidar_time") -> np.ndarray:
+    def get_lidar_geo_index(
+        self,
+        sort_by: str = "lidar_time",
+        partitions: Optional[Iterable[Partition]] = None,
+        max_delta_s=DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S,
+    ) -> np.ndarray:
         """Returns a lidar index of dtype LIDAR_INDEX_V0_0_DTYPE.
 
         WARNING: 'rel_path' entries in indexes may be padded with spaces on the right since they are fixed-width
@@ -209,37 +306,65 @@ class LogReader:
 
         Args:
             sort_by: name of the field that we want to sort by. Defaults to `lidar_time`
+            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
+                defaults to None, which means that no sensor measurements are filtered.
+            max_delta_s: maximum number of seconds to mismatch between array timestamps and pose timestamps for the
+                match to be considered valid.
         Returns:
             A structured numpy array with the lidar observations and their metadata.
         """
+        # TODO(julieta) v0 and v1 have different name formatting on s3
         index_fpath = os.path.join(self.lidar_root, "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
-            raise ValueError(f"Index file not found: {index_fpath}!")
+            raise FileNotFoundError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
             # TODO(andrei): Pre-sort the indexes at gen time.
             index = np.load(f)["index"]
 
         index = index[np.argsort(index[sort_by])]
+
+        # Filter by partitions
+        partitions_mask = self.filter_partitions(partitions, index["lidar_time"], max_delta_s)
+        index = index[partitions_mask]
+
         return index
 
     @lru_cache(maxsize=16)
-    def get_cam_geo_index(self, cam_name: CamName, sort_by: str = "img_time") -> np.ndarray:
+    def get_cam_geo_index(
+        self,
+        cam_name: CamName = CamName.MIDDLE_FRONT_WIDE,
+        sort_by: str = "img_time",
+        partitions: Optional[Iterable[Partition]] = None,
+        max_delta_s=DEFAULT_SENSOR_TO_POSE_MATCH_EPSILON_S,
+    ) -> np.ndarray:
         """Returns a camera index of dtype CAM_INDEX_V0_0_DTYPE.
         Args:
             cam_name: name of the camera index to load
             sort_by: name of the field that we want to sort by. Defaults to `img_time`
+            partitions: Set of partitions to load. These are used to load subset of the date (e.g., training queries).
+                defaults to None, which means that no sensor measurements are filtered.
+            max_delta_s: maximum number of seconds to mismatch between array timestamps and pose timestamps for the
+                match to be considered valid.
         Returns:
             A structured numpy array with the camera observations and their metadata.
         """
+        # Get the pre-computed index
+        # TODO(julieta) v0 and v1 have different name formatting on s3
         index_fpath = os.path.join(self.get_cam_root(cam_name), "index", f"index_v{self._index_version:02d}.npz")
         if not self.fs.exists(index_fpath):
-            raise ValueError(f"Index file not found: {index_fpath}!")
+            raise FileNotFoundError(f"Index file not found: {index_fpath}!")
 
         with self.fs.open(index_fpath, "rb") as f:
             index = np.load(f)["index"]
 
+        # Ensure ordering
         index = index[np.argsort(index[sort_by])]
+
+        # Filter by partitions
+        partitions_mask = self.filter_partitions(partitions, index["img_time"], max_delta_s)
+        index = index[partitions_mask]
+
         return index
 
     def calib(self):
@@ -358,6 +483,7 @@ class LogReader:
                 ]
             ),
         )
+
         return pose_index
 
     @cached_property
