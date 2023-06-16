@@ -198,7 +198,7 @@ class LogReader:
 
     def partition_assigments(self, partitions: Optional[Iterable[Partition]] = None) -> List[np.ndarray]:
         """Fetches partition indices from S3 and converts them to boolean arrays according to the requested partition
-        values. Note that these partitions are wrt the raw pose data @ 100Hz, not the sensor data; therefore, we must
+        values. Note that these partitions are wrt the raw pose data @ 100Hz, not the sensor data (i.e. not wrt any index); therefore, we must
         index sensor data into those timestamps to find out which partitions they belong to.
 
         Args:
