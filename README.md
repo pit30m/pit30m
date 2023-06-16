@@ -8,10 +8,7 @@
 ## Overview
 This is the Python software development kit for the Pit30M benchmark for large-scale global localization. The devkit is currently in a pre-release state and many features are coming soon!
 
-Consider checking out [the original paper](https://arxiv.org/abs/2012.12437). If you would like to, you could also follow some of the authors' social media, e.g., [Andrei's](https://twitter.com/andreib) in order to be among
-the first to hear of any updates!
-
-:warning: As of v0.0.1 the ground truth is not yet available as we are wrapping up the final steps for the dataset splits (train/test/val + query/database). The poses will be added once the next version of the devkit is available. Please see [the issue tracking v0.0.2](https://github.com/pit30m/pit30m/issues/20) for more information on this.
+Consider checking out [the original paper](https://arxiv.org/abs/2012.12437). If you would like to, you could also follow some of the authors' social media, e.g., [Julieta's](https://twitter.com/yoknapathawa) or [Andrei's](https://twitter.com/andreib) in order to be among the first to hear of any updates!
 
 ## Getting Started
 
