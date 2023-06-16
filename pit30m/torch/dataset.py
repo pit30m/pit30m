@@ -18,7 +18,7 @@ except ImportError as err:
 from pit30m.camera import CamName
 from pit30m.data.log_reader import CameraImage, LogReader
 from pit30m.data.submap import Map
-from pit30m.indexing import CAM_INDEX_V0_0_DTYPE
+from pit30m.indexing import CAM_INDEX_V2_0_DTYPE
 
 
 class Pit30MLogDataset(Dataset):
@@ -77,7 +77,7 @@ class Pit30MLogDataset(Dataset):
 
         # Refer to the dtype definition for more information on what is available.
         cur_sample: np.ndarray = cur_index[idx_in_log]
-        assert cur_sample.dtype == CAM_INDEX_V0_0_DTYPE
+        assert cur_sample.dtype == CAM_INDEX_V2_0_DTYPE
 
         image: CameraImage = self._log_readers[cur_log_id].get_image(self._cam_name, idx_in_log)
 
