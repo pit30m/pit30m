@@ -3,7 +3,7 @@
 [![Python CI Status](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/pit30m/pit30m/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/pit30m)](https://pypi.org/project/pit30m/)
-[![Public on the AWS Open Data Registry](https://shields.io/badge/Open%20Data%20Registry-public-green?logo=amazonaws&style=flat)](#)
+[![Public on the AWS Open Data Registry](https://shields.io/badge/Open%20Data%20Registry-public-green?logo=amazonaws&style=flat)](https://registry.opendata.aws/aurora_msds/)
 
 ## Overview
 This is the Python software development kit for the Pit30M benchmark for large-scale global localization. The devkit is currently in a pre-release state and many features are coming soon!
@@ -71,8 +71,15 @@ Note that in the pre-release time, `torch` will be a "dev" dependency, since it'
 
 ### Publishing
 
+#### First Time
  1. [Configure poetry](https://www.digitalocean.com/community/tutorials/how-to-publish-python-packages-to-pypi-using-poetry-on-ubuntu-22-04) with a PyPI account which has access to edit the package. You need to make sure poetry is configured with your API key.
- 2. `poetry publish --build`
+
+#### New Release
+ 1. Decide on the commit with the desired changes.
+ 2. Bump the version number in `pyproject.toml`.
+ 3. `git tag vA.B.C` and `git push origin <tag>`
+ 4. `poetry publish --build` will build and upload the package to PyPI.
+ 5. Create the release on GitHub & upload the newly generated package files from the previous step with it.
 
 
 ## Citation
