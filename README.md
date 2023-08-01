@@ -81,8 +81,9 @@ Note that in the pre-release time, `torch` will be a "dev" dependency, since it'
  4. `poetry publish --build` will build and upload the package to PyPI.
  5. Create the release on GitHub & upload the newly generated package files from the previous step with it.
 
+## Credits
 
-## Citation
+### Citation
 
 ```bibtex
 @inproceedings{martinez2020pit30m,
@@ -94,6 +95,12 @@ Note that in the pre-release time, `torch` will be a "dev" dependency, since it'
   organization={IEEE}
 }
 ```
+
+### Special Thanks
+
+There are tons of additionaly people whose support helped this project happen. Thank you Yevgeni Litvin, Nemanja Djuric, Su Zhaoen, and Carl Wellington for supporting the dataset release. Thanks to Thomas Fähse for [his detailed blog post](https://tfaehse.medium.com/making-dashcam-videos-gdpr-compliant-f9832883fe94) on how to effectively and efficiently anonymize automotive data.
+
+Further thanks to the wonderful folks at AWS who supported the release of the Aurora Multi-Sensor Dataset as part of the AWS Open Data Sponsorship Program: Matt Williams, Joe Flasher, Mike Jeffe, and Peter Schmiedeskamp.
 
 ## Additional Details
 
