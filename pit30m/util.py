@@ -1,5 +1,7 @@
 from itertools import zip_longest
 
+import yaml
+
 
 def print_list_with_limit(lst, limit: int, logger=None) -> None:
     out = ""
@@ -25,3 +27,13 @@ def safe_zip(*args):
         if sentinel in tup:
             raise ValueError("Iterables must be of equal length.")
         yield tup
+
+
+# Trick to bypass !binary parts of YAML files before we can support them. (They are low priority and not
+# very important anyway.)
+class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
+    def ignore_unknown(self, node):
+        return None
+
+
+SafeLoaderIgnoreUnknown.add_constructor("!binary", SafeLoaderIgnoreUnknown.ignore_unknown)
