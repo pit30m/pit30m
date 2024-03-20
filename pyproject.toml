@@ -43,7 +43,7 @@ utm = ">=0.7.0"       # additional geospatial computations concerning UTM projec
 pytest = "^7"
 pytest-mock = "*"
 ipdb = "^0.13"
-black = "^23.1"
+black = ">=23.1,<25.0"
 pytest-xdist = "^3.2"
 # TODO(andrei): Special group and special build for these optional deps.
 torch = "^1.13"
