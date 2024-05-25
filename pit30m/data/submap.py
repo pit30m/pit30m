@@ -153,3 +153,4 @@ class Map(metaclass=Singleton):
         # pylint: disable=unpacking-non-sequence
         wgs_lat, wgs_lon = self._pit30m_utm_to_wgs84.transform(utm_poses[:, 0, np.newaxis], utm_poses[:, 1, np.newaxis])
         return np.hstack((wgs_lat, wgs_lon, utm_poses[:, 2, np.newaxis]))
+

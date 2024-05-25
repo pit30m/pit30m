@@ -12,6 +12,7 @@ import lz4
 import numpy as np
 from joblib import Memory, Parallel, delayed
 
+from pit30m.config import get_pit30m_cache_dir
 from pit30m.fs_util import cached_glob_images, cached_glob_lidar_sweeps
 from pit30m.util import print_list_with_limit
 
@@ -24,7 +25,7 @@ MAX_IMG_RELPATH_LEN = 22  # = len("0090/000000.night.webp")
 MAX_LIDAR_RELPATH_LEN = 15  # = len("0000/007959.npz")
 START_OF_2011_UNIX = 1293861600
 
-memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
+memory = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
 # Please refer to the NumPy documentation for exact details on type dimensions.
 # https://numpy.org/doc/stable/reference/arrays.dtypes.html

@@ -9,13 +9,13 @@ from uuid import UUID
 import fsspec
 import lz4
 import numpy as np
-import numpy.typing as npt
 import utm
 from joblib import Memory
 from numpy.lib import recfunctions as rfn
 from PIL import Image
 
 from pit30m.camera import CamName
+from pit30m.config import get_pit30m_cache_dir
 from pit30m.data.partitions import (
     GeoPartition,
     Partition,
@@ -27,7 +27,7 @@ from pit30m.data.submap import Map, SubmapPoseNotFoundException
 from pit30m.indexing import associate, associate_np
 from pit30m.time_utils import gps_seconds_to_utc
 
-memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
+memory = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
 
 @dataclass
