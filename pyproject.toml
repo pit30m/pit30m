@@ -46,8 +46,10 @@ ipdb = "^0.13"
 black = "^24.4"
 pytest-xdist = "^3.2"
 # TODO(andrei): Special group and special build for these optional deps.
-torch = "^1.13"
-torchdata = "^0.5"
+# NOTE that Torch 2.0.1 breaks 3.11 tests. After, say, summer 2024 we should use 2.2 as a minimum
+# version. These are dev dependencies so they shouldn't affect usability too much.
+torch = "<2.0.1"
+torchdata = "^0.6"
 pylint = "^3.2"
 boto3 = "^1"
 ruff = "^0.4.5"
