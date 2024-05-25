@@ -207,3 +207,5 @@ fabric.properties
 
 credentials
 credentials/
+cloud-out/
+tools/
