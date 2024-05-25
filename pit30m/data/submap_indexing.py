@@ -99,7 +99,8 @@ def _log_submap_info_to_chunks(submap_ids: list[UUID], mrp_compact: np.ndarray) 
     cur_submap = submap_ids[0]
     cur_start = mrp_compact[0, :]
     last_row = None
-    for submap_id, mrp_row in zip(submap_ids, mrp_compact, strict=True):
+    assert len(submap_ids) == len(mrp_compact)
+    for submap_id, mrp_row in zip(submap_ids, mrp_compact):
         if submap_id != cur_submap:
             assert last_row is not None
             chunks.append((cur_submap, tuple(cur_start.tolist()), tuple(last_row.tolist())))
@@ -133,4 +134,5 @@ def _load_submap_index_inputs(
     # it to be somewhat flaky in practice.
     results = pool(delayed(_load_subsampled_poses)(log_id, mrp_subsample) for log_id in log_ids)
 
-    return dict(zip(log_ids, results, strict=True))
+    assert len(log_ids) == len(results)
+    return dict(zip(log_ids, results))
