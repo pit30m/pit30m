@@ -10,13 +10,11 @@ import numpy.typing as npt
 class Partition(Enum):
     @staticmethod
     @abstractmethod
-    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]:
-        ...
+    def value_to_index(val: Partition, index: np.ndarray) -> npt.NDArray[np.bool_]: ...
 
     @classmethod
     @abstractmethod
-    def path_name(self) -> str:
-        ...
+    def path_name(self) -> str: ...
 
 
 # Preprocessing filters invalid poses and limits the number of poses per squared metre
