@@ -1,4 +1,5 @@
 """(Deprecated, WIP) Example plotting using Open3d."""
+
 # mypy: ignore-errors
 
 import multiprocessing as mp
