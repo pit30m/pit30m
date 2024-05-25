@@ -1,0 +1,68 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: >-
+  Pit30M: A Benchmark for Global Localization in the Age of
+  Self-Driving Cars
+type: conference-paper
+conference:
+  name: "IROS 2020"
+message: >-
+  If you use the dataset and/or SDK, please cite the
+  corresponding paper
+authors:
+  - given-names: Martinez
+    family-names: Julieta
+    affiliation: Uber ATG
+  - given-names: Sasha
+    family-names: Doubov
+    affiliation: Uber ATG
+  - given-names: Jack
+    family-names: Fan
+    affiliation: Uber ATG
+  - given-names: Ioan Andrei
+    family-names: Bârsan
+    affiliation: Uber ATG
+  - given-names: Shenlong
+    family-names: Wang
+    affiliation: Uber ATG
+  - given-names: Gellért
+    family-names: Máttyus
+    affiliation: Uber ATG
+  - given-names: Raquel
+    family-names: Urtasun
+    affiliation: Uber ATG
+identifiers:
+  - type: doi
+    value: 10.1109/IROS45743.2020.9340924
+    description: Published at IROS 2020
+repository-code: 'https://github.com/pit30m/pit30m'
+url: 'https://pit30m.github.io'
+abstract: >-
+  We are interested in understanding whether retrieval-based
+  localization approaches are good enough in the context of
+  self-driving vehicles. Towards this goal, we introduce
+  Pit30M, a new image and LiDAR dataset with over 30 million
+  frames, which is 10 to 100 times larger than those used in
+  previous work. Pit30M is captured under diverse conditions
+  (i.e., season, weather, time of the day, traffic), and
+  provides accurate localization ground truth. We also
+  automatically annotate our dataset with historical weather
+  and astronomical data, as well as with image and LiDAR
+  semantic segmentation as a proxy measure for occlusion. We
+  benchmark multiple existing methods for image and LiDAR
+  retrieval and, in the process, introduce a simple, yet
+  effective convolutional network-based LiDAR retrieval
+  method that is competitive with the state of the art. Our
+  work provides, for the first time, a benchmark for
+  sub-metre retrieval-based localization at city scale.
+keywords:
+  - dataset
+  - autonomous driving
+  - sdv
+  - robotics
+  - localization
+  - neural rendering
+  - large-scale
+license: MIT
