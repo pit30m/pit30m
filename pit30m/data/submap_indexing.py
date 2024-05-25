@@ -50,7 +50,6 @@ def compute_submap_index(
     return submap_id_to_chunks
 
 
-
 @_mem.cache(verbose=0)
 def _load_subsampled_poses(log_id: str, subsample_factor: int) -> tuple[list, np.ndarray]:
     """For the given log, returns a tuple with a list of N submap UUIDs and an N x 4 array of map-relative poses.
@@ -111,6 +110,7 @@ def _log_submap_info_to_chunks(submap_ids: list[UUID], mrp_compact: np.ndarray) 
 
     chunks.append((cur_submap, tuple(cur_start.tolist()), tuple(last_row.tolist())))
     return chunks
+
 
 def _load_submap_index_inputs(
     log_ids: list[str],

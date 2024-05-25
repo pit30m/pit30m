@@ -31,7 +31,9 @@ class Pit30MCLI:
         with open(self._log_list_fpath, "r") as f:
             return [line.strip() for line in f]
 
-    def compute_submap_index(self, out_fpath: str, log_ids: Optional[list[str]] = None, mrp_subsample: int = 10, max_jobs: int = 0) -> None:
+    def compute_submap_index(
+        self, out_fpath: str, log_ids: Optional[list[str]] = None, mrp_subsample: int = 10, max_jobs: int = 0
+    ) -> None:
         """Returns a submap-to-log index.
 
         For each unique submap UUID we get a list of log chunks which indicate approximately when that log entered, then
@@ -64,7 +66,6 @@ class Pit30MCLI:
             json.dump(index, f, indent=4)
 
         print(f"Saved submap index to {out_fpath}")
-
 
     def multicam_demo(
         self,

@@ -3,6 +3,7 @@ from typing import Optional
 
 PIT30M_CACHE_DIR_ENV_VAR = "PIT30M_CACHE_DIR"
 
+
 def get_pit30m_cache_dir() -> Optional[str]:
     """Returns the directory where Pit30M caches various things.
 
