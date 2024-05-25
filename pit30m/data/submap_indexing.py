@@ -45,9 +45,8 @@ def compute_submap_index(
             # We use string UUIDs to make JSON serialization easy.
             submap_id_to_chunks[str(cur_submap)].append((log_id, cur_start, cur_end))
 
-    submap_id_to_chunks = dict(submap_id_to_chunks)
     print(f"Finished. Total processed {len(coarse_data)} out of which {skipped} were skipped (too short).")
-    return submap_id_to_chunks
+    return dict(submap_id_to_chunks)
 
 
 @_mem.cache(verbose=0)
@@ -102,13 +101,15 @@ def _log_submap_info_to_chunks(submap_ids: list[UUID], mrp_compact: np.ndarray) 
     last_row = None
     for submap_id, mrp_row in zip(submap_ids, mrp_compact, strict=True):
         if submap_id != cur_submap:
+            assert last_row is not None
             chunks.append((cur_submap, tuple(cur_start.tolist()), tuple(last_row.tolist())))
             cur_submap = submap_id
             cur_start = mrp_row
 
         last_row = mrp_row
 
-    chunks.append((cur_submap, tuple(cur_start.tolist()), tuple(last_row.tolist())))
+    if last_row is not None:
+        chunks.append((cur_submap, tuple(cur_start.tolist()), tuple(last_row.tolist())))
     return chunks
 
 
