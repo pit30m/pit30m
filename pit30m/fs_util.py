@@ -7,7 +7,9 @@ from urllib.parse import urlparse
 import fsspec
 from joblib import Memory
 
-memory = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
+from pit30m.config import get_pit30m_cache_dir
+
+memory = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
 
 @memory.cache(ignore=["fs"])

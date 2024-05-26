@@ -23,6 +23,7 @@ from joblib import Memory, Parallel, delayed
 from tqdm import tqdm
 
 from pit30m.camera import CamName
+from pit30m.config import get_pit30m_cache_dir
 from pit30m.data.log_reader import VELODYNE_NAME, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import build_camera_index, build_lidar_index
@@ -59,7 +60,7 @@ KNOWN_INCOMPLETE_CAMERAS = [
     "dc3d9c11-5ec7-41cd-d4e0-ec795cdae27d",
 ]
 
-cache = Memory(location=os.path.expanduser("~/.cache/pit30m"), verbose=0)
+cache = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
 
 @dataclass
