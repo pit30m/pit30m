@@ -9,7 +9,7 @@ on:
   merge_group:
 
 env:
-  POETRY_VERSION: 1.5.1
+  POETRY_VERSION: 1.8.3
 
 jobs:
   build:
@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10"]
+        # Python 3.9 EOL is 2025-10, we should remove support shortly after that
+        python-version: ["3.9", "3.10", "3.11"]
 
     steps:
       - uses: actions/checkout@v3
