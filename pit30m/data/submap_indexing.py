@@ -118,10 +118,10 @@ def _load_submap_index_inputs(
     log_ids: list[str],
     mrp_subsample: int,
     max_jobs: int = 0,
-):
+) -> Dict[str, Tuple[List, np.ndarray]]:
     """Loads all index data for processing.
 
-    As of 2024-05-22 the code only 64GiB of RAM for all logs at 1Hz sampling.
+    As of 2024-05-22 the code used only 64GiB of RAM for all logs at 1Hz sampling.
     """
     print(f"Will load data for {len(log_ids)} log IDs")
     oversubscribe = 2.0

@@ -32,7 +32,7 @@ class Pit30MCLI:
             return [line.strip() for line in f]
 
     def compute_submap_index(
-        self, out_fpath: str, log_ids: Optional[list[str]] = None, mrp_subsample: int = 10, max_jobs: int = 0
+        self, out_fpath: str, log_ids: Optional[List[str]] = None, mrp_subsample: int = 10, max_jobs: int = 0
     ) -> None:
         """Returns a submap-to-log index.
 
