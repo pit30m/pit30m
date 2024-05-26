@@ -5,7 +5,7 @@ import shlex
 import subprocess
 import tempfile
 from functools import cached_property
-from typing import Iterable, Optional, Union
+from typing import Iterable, List, Optional, Union
 from urllib.parse import urlparse
 
 import fire
@@ -26,7 +26,7 @@ class Pit30MCLI:
         self._log_list_fpath = log_list_fpath
 
     @cached_property
-    def all_log_ids(self) -> list[str]:
+    def all_log_ids(self) -> List[str]:
         """Return a list of all log IDs in the dataset."""
         with open(self._log_list_fpath, "r") as f:
             return [line.strip() for line in f]

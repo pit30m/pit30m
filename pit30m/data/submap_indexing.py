@@ -5,7 +5,7 @@ import os
 import random
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Any, Dict, List, Tuple
 from uuid import UUID
 
 import numpy as np
@@ -21,13 +21,13 @@ _mem = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
 @_mem.cache(verbose=0)
 def compute_submap_index(
-    log_ids: list[str],
+    log_ids: List[str],
     mrp_subsample: int,
     max_jobs: int = 0,
-) -> dict[str, list[tuple[str, tuple, tuple]]]:
+) -> Dict[str, List[Tuple[str, Tuple, Tuple]]]:
     """Please refer to the CLI's 'create_submap_index' function for detailed documentation."""
     coarse_data = _load_submap_index_inputs(log_ids, mrp_subsample, max_jobs)
-    submap_id_to_chunks = defaultdict(list)
+    submap_id_to_chunks = defaultdict(List)
     skipped = 0
 
     for log_id, (submap_ids, subsampled_mrp) in tqdm(coarse_data.items()):
@@ -35,7 +35,7 @@ def compute_submap_index(
             skipped += 1
             continue
 
-        assert isinstance(submap_ids, list)
+        assert isinstance(submap_ids, List)
 
         # This will give us all the contiguous chunk in a log which are within some submap.
         # We then add these to our index dict so we can look up specific log chunks (log_id,
@@ -50,7 +50,7 @@ def compute_submap_index(
 
 
 @_mem.cache(verbose=0)
-def _load_subsampled_poses(log_id: str, subsample_factor: int) -> tuple[list, np.ndarray]:
+def _load_subsampled_poses(log_id: str, subsample_factor: int) -> Tuple[List, np.ndarray]:
     """For the given log, returns a tuple with a list of N submap UUIDs and an N x 4 array of map-relative poses.
 
     The array has the following columns: time, x, y, z - each relative to the corresponding map.
@@ -86,7 +86,7 @@ def _load_subsampled_poses(log_id: str, subsample_factor: int) -> tuple[list, np
     return sids, compact
 
 
-def _log_submap_info_to_chunks(submap_ids: list[UUID], mrp_compact: np.ndarray) -> list[tuple[UUID, tuple, tuple]]:
+def _log_submap_info_to_chunks(submap_ids: List[UUID], mrp_compact: np.ndarray) -> List[Tuple[UUID, Tuple, Tuple]]:
     """Returns a list of contiguous chunks of map-relative poses.
 
     Designed to be used with an N x 4 MRP array, where MRP is (time, mrp_x, mrp_y, mrp_z).
@@ -115,7 +115,7 @@ def _log_submap_info_to_chunks(submap_ids: list[UUID], mrp_compact: np.ndarray) 
 
 
 def _load_submap_index_inputs(
-    log_ids: list[str],
+    log_ids: List[str],
     mrp_subsample: int,
     max_jobs: int = 0,
 ) -> Dict[str, Tuple[List, np.ndarray]]:
