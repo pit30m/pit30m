@@ -2,7 +2,7 @@ import io
 import os
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
-from typing import Any, Iterable, Iterator, List, Optional, Tuple, Type
+from typing import Iterable, Iterator, List, Optional, Tuple, Type
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -24,7 +24,7 @@ from pit30m.data.partitions import (
     SizePartition,
 )
 from pit30m.data.submap import Map, SubmapPoseNotFoundException
-from pit30m.indexing import associate, associate_np
+from pit30m.indexing import associate_np
 from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=get_pit30m_cache_dir(), verbose=0)

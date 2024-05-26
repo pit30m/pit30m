@@ -27,7 +27,7 @@ from pit30m.config import get_pit30m_cache_dir
 from pit30m.data.log_reader import VELODYNE_NAME, LogReader
 from pit30m.data.submap import Map
 from pit30m.indexing import build_camera_index, build_lidar_index
-from pit30m.util import print_list_with_limit, safe_zip
+from pit30m.util import SafeLoaderIgnoreUnknown, print_list_with_limit, safe_zip
 
 EXPECTED_IMAGE_SIZE = (1200, 1920, 3)
 
@@ -1355,16 +1355,6 @@ class MonkeyWrench:
                 if subentry.endswith(".webp"):
                     print(subentry)
                     break
-
-
-# Trick to bypass !binary parts of YAML files before we can support them. (They are low priority and not
-# very important anyway.)
-class SafeLoaderIgnoreUnknown(yaml.SafeLoader):
-    def ignore_unknown(self, node):
-        return None
-
-
-SafeLoaderIgnoreUnknown.add_constructor("!binary", SafeLoaderIgnoreUnknown.ignore_unknown)
 
 
 if __name__ == "__main__":
