@@ -27,8 +27,8 @@ classifiers = [
 python = "^3.9"
 fsspec = ">=2024"     # seamlessly talk to local or remote (S3) filesystems
 s3fs = ">=2024"       # provides S3 for fsspec
-geopandas = ">=0.10"  # handle geospatial data, e.g. for partitions
-pygeos = ">=0.12"     # backend for geopandas
+geopandas = ">=1.0.1" # handle geospatial data, e.g. for partitions and meta-data look-ups
+pygeos = ">=0.14"     # backend for geopandas
 numpy = ">=1.20"      # numerical computation, array operations
 fire = ">=0.5"        # helper for command-line interface programs
 joblib = "*"          # parallelization
