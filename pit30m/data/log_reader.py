@@ -29,6 +29,8 @@ from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
+DEFAULT_WEATHER_GEOJSON_FPATH = os.path.join(get_pit30m_cache_dir(), "weather.geojson")
+
 
 @dataclass
 class CameraImage:
