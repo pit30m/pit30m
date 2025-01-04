@@ -16,6 +16,7 @@ from tqdm import tqdm
 _MIN_JSON_CHARS = 5
 DEFAULT_WEATHER_DATA_URI = "s3://pit30m/metadata/darksky_api_cache.zip"
 
+
 def _process_weather_file(file_path: str) -> dict[str, Any]:
     """Reads a single weather JSON file and returns a record dict or None."""
     filename = os.path.basename(file_path)
@@ -50,6 +51,7 @@ def _process_weather_file(file_path: str) -> dict[str, Any]:
 
     return record
 
+
 def aggregate_weather_data(input_dir="/mnt/weather", output_geojson="/tmp/weather_data.geojson", num_processes=8):
     """Aggregates weather data into a single GeoDataFrame using parallel processing.
 
@@ -64,19 +66,19 @@ def aggregate_weather_data(input_dir="/mnt/weather", output_geojson="/tmp/weathe
 
     # Convert the raw records into the GeoDataFrame other parts of our tooling can use.
     df = pd.DataFrame(records)
-    gdf = gpd.GeoDataFrame(
-        df,
-        geometry=gpd.points_from_xy(df["lon"], df["lat"]),
-        crs="EPSG:4326"
-    )
+    gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df["lon"], df["lat"]), crs="EPSG:4326")
 
     print(f"Writing output to {output_geojson}")
     gdf.to_file(output_geojson, driver="GeoJSON")
     print("Done.")
 
 
-def aggregate_weather_data_s3(output_geojson_fpath: str, num_processes: int, s3_fpath: str = DEFAULT_WEATHER_DATA_URI,
-                            local_staging_dir: str = "/tmp/pit30m-weather-raw"):
+def aggregate_weather_data_s3(
+    output_geojson_fpath: str,
+    num_processes: int,
+    s3_fpath: str = DEFAULT_WEATHER_DATA_URI,
+    local_staging_dir: str = "/tmp/pit30m-weather-raw",
+):
     """Aggregates weather data from S3 into a single GeoDataFrame using parallel processing.
 
     The raw Pit30M data is a huge collection of JSON files, each containing weather data for a specific time/lat/lon.

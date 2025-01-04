@@ -69,8 +69,7 @@ class Pit30MCLI:
 
         print(f"Saved submap index to {out_fpath}")
 
-    def compute_weather_geojson(self, out_fpath: str = DEFAULT_WEATHER_GEOJSON_FPATH,
-                                num_processes: int = 8) -> None:
+    def compute_weather_geojson(self, out_fpath: str = DEFAULT_WEATHER_GEOJSON_FPATH, num_processes: int = 8) -> None:
         """Converts the dataset's (ugly) raw weather data into a much more convenient GeoJSON.
 
         Args:
@@ -79,7 +78,6 @@ class Pit30MCLI:
                             The sweet spot is 4--8.
         """
         aggregate_weather_data_s3(out_fpath, num_processes=num_processes)
-
 
     def multicam_demo(
         self,
