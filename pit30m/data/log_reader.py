@@ -29,6 +29,8 @@ from pit30m.time_utils import gps_seconds_to_utc
 
 memory = Memory(location=get_pit30m_cache_dir(), verbose=0)
 
+DEFAULT_WEATHER_GEOJSON_FPATH = os.path.join(get_pit30m_cache_dir(), "weather.geojson")
+
 
 @dataclass
 class CameraImage:
@@ -156,7 +158,7 @@ class LogReader:
         return fsspec.filesystem(urlparse(PARTITIONS_BASEPATH).scheme, anon=True)
 
     def _load_partition(self, Partition: Type[Partition]) -> np.ndarray:
-        """Feches any of this log's partitions from s3"""
+        """Fetches any of this log's partitions from s3"""
         partition_fpath = os.path.join(PARTITIONS_BASEPATH, Partition.path_name(), f"{self.log_id}.npz")
         if not self.partition_fs.exists(partition_fpath):
             raise FileNotFoundError(f"Partition file not found: {partition_fpath}")

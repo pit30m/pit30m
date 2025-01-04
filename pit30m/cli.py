@@ -12,7 +12,9 @@ import fire
 import fsspec
 from joblib import Parallel, delayed
 
+from pit30m.data.log_reader import DEFAULT_WEATHER_GEOJSON_FPATH
 from pit30m.data.submap_indexing import compute_submap_index
+from pit30m.data.weather import aggregate_weather_data_s3
 
 
 class Pit30MCLI:
@@ -66,6 +68,16 @@ class Pit30MCLI:
             json.dump(index, f, indent=4)
 
         print(f"Saved submap index to {out_fpath}")
+
+    def compute_weather_geojson(self, out_fpath: str = DEFAULT_WEATHER_GEOJSON_FPATH, num_processes: int = 8) -> None:
+        """Converts the dataset's (ugly) raw weather data into a much more convenient GeoJSON.
+
+        Args:
+            out_fpath:      Output file path for the GeoJSON.
+            num_processes:  Number of parallel processes to use for processing the raw data, once it is downloaded.
+                            The sweet spot is 4--8.
+        """
+        aggregate_weather_data_s3(out_fpath, num_processes=num_processes)
 
     def multicam_demo(
         self,
