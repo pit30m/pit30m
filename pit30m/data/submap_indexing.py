@@ -27,7 +27,7 @@ def compute_submap_index(
 ) -> Dict[str, List[Tuple[str, Tuple, Tuple]]]:
     """Please refer to the CLI's 'create_submap_index' function for detailed documentation."""
     coarse_data = _load_submap_index_inputs(log_ids, mrp_subsample, max_jobs)
-    submap_id_to_chunks = defaultdict(List)
+    submap_id_to_chunks = defaultdict(list)
     skipped = 0
 
     for log_id, (submap_ids, subsampled_mrp) in tqdm(coarse_data.items()):
@@ -35,7 +35,7 @@ def compute_submap_index(
             skipped += 1
             continue
 
-        assert isinstance(submap_ids, List)
+        assert isinstance(submap_ids, list)
 
         # This will give us all the contiguous chunk in a log which are within some submap.
         # We then add these to our index dict so we can look up specific log chunks (log_id,
