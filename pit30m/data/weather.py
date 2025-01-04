@@ -14,6 +14,8 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 _MIN_JSON_CHARS = 5
+_RAW_DATA_CACHE = "/tmp/pit30m_darksky_api_cache.zip"
+
 DEFAULT_WEATHER_DATA_URI = "s3://pit30m/metadata/darksky_api_cache.zip"
 
 
@@ -85,6 +87,9 @@ def aggregate_weather_data_s3(
     This format is very slow and annoying to deal with, so the devkit first downloads the data and aggregates it into
     a compact GeoJSON which we can then query at log reading time, visualize, analyze, etc.
 
+    This should only be run once by a developer, after which the GeoJSON can be reused. On an average 5800X PC with a
+    1gbps connection to S3, this takes about 4 minutes.
+
     Args:
         output_geojson_fpath:   Output file path for the GeoJSON.
         num_processes:          Number of parallel processes to use for processing the raw data, once it is downloaded.
@@ -94,10 +99,20 @@ def aggregate_weather_data_s3(
         local_staging_dir:      Local directory to stage the downloaded extracted files, before processing them into
                                 a GeoJSON.
     """
-    print("Downloading weather data...")
-    with fsspec.open(s3_fpath, "rb") as f:
-        with zipfile.ZipFile(f) as z:
-            z.extractall(local_staging_dir)
+    print("Downloading and unzipping weather data...")
+    if not os.path.isdir(local_staging_dir):
+        os.makedirs(local_staging_dir)
+
+    if os.path.isfile(_RAW_DATA_CACHE):
+        with open(_RAW_DATA_CACHE, "rb") as f:
+            with zipfile.ZipFile(f) as z:
+                z.extractall(local_staging_dir)
+    else:
+        with fsspec.open(s3_fpath, "rb", anon=True) as f:
+            with zipfile.ZipFile(f) as z:
+                z.extractall(local_staging_dir)
 
     print("Aggregating weather data...")
-    return aggregate_weather_data(local_staging_dir, output_geojson_fpath, num_processes)
+    return aggregate_weather_data(
+        os.path.join(local_staging_dir, "darksky_api_cache"), output_geojson_fpath, num_processes
+    )
